@@ -1,10 +1,10 @@
-# 🌀 TortalPortal
+ # 🌀 TortalPortal
 
 ![Valheim Mod](https://img.shields.io/badge/Valheim-Portal_Overhaul-orange.svg)
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Assets](https://img.shields.io/badge/Assets-100%25_Procedural-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.0.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.0.1-lightgrey.svg)]()
 
 > *"The old way was to carve a name into the stone and hope another bore the same. A tally of runes, scratched and rescratched, and still you stepped through blind. Better to know the road before you walk it, Viking."*
 
@@ -19,10 +19,12 @@ Lock your gates behind a PIN. Bring the wolves. Decide exactly what may and may 
 ### 🗺️ Every Portal in the Realm, Listed
 Step into range and the destination window opens: every portal in the world, sorted by name, each showing its lock state, its biome, how far it is from you, and who raised it. Search by name to cut a long list down. Selecting a destination pins it on the **Large Minimap**, which opens alongside the window, so you always see the route in context rather than guessing from a tag.
 
+The list is built by the **server**, which is the only machine that holds the whole world, and handed to each player as they log in — so it is complete from the first portal you touch. Install it on a world that has been running for months and the startup scan finds every gate already standing in it; you do not have to go and visit them first.
+
 Walk away and the window closes itself. Arrive somewhere and it stays shut, so you are never greeted by a menu the instant you land — step off and walk back to bring it up again.
 
 ### 📸 See Exactly Where You Are Going
-Every portal quietly photographs its own destination when you raise it, on a wide-angle lens standing out in front of the gate, and stores the shot on the portal itself so **every player on the server sees it**. A background pass keeps the images current as the world changes around them.
+Every portal quietly photographs its own destination when you raise it, on a wide-angle lens standing out in front of the gate, and stores the shot on the portal itself so **every player on the server sees it**. A background pass keeps the images current as the world changes around them, and portals that have never been photographed — every gate on a world that predates the mod — are shot first, so an established server fills its album in as people move about it.
 
 The list shows each shot as a thumbnail — and **clicking it opens the photograph full screen** at your resolution, captioned with the biome and coordinates. Read the terrain, spot the tar pit, notice the Fuling camp, *then* decide.
 
@@ -58,6 +60,7 @@ A built-in bypass lets admins ignore PIN locks, item filters and portal placemen
 - **Configure it** — walk up and press `E`. Set its name and toggle a PIN lock.
 - **Travel** — walk into the portal's range. Pick a destination from the list; the big map marks it, and clicking its picture shows you the place full screen. Hit **Teleport**.
 - **On arrival** — the menu stays shut so you can get on with it. Step away and walk back to bring it up again.
+- **Typing** — click into the search, PIN or name field and the keyboard is yours alone; your character stands still and hotkeys hold their peace. `Escape` hands it back without closing the window.
 
 ---
 
@@ -65,18 +68,22 @@ A built-in bypass lets admins ignore PIN locks, item filters and portal placemen
 
 Settings live in `wubarrk.TortalPortal.cfg`.
 
+**Your settings survive updates.** The file carries a layout version, and when the mod changes shape it is backed up beside itself and every value is carried over — a whitelist you spent an evening on does not evaporate because a setting moved sections. If something genuinely no longer exists, it is named in the log with its value and the path of the backup rather than vanishing quietly.
+
 ### Server-synced (admin controlled)
 | Setting | What it does |
 | :--- | :--- |
 | `FilterMode` | `Vanilla`, `WhitelistBlacklist`, or `BypassAll`. |
 | `WhitelistItems` | Comma-separated. Any item here bypasses vanilla portal restrictions (e.g. adding `Bronze` lets you teleport with Bronze, but Iron remains blocked). |
 | `BlacklistItems` | Comma-separated. Any item here is explicitly blocked, even if it normally would be allowed. |
-| `MaxPortalsPerPlayer` | Limit how many portals each player can construct. `0` for unlimited. |
+| `MaxPortalsPerPlayer` | Limit how many portals each player can construct. **Unlimited by default** — `0` or any negative number means no cap at all. Set a positive number to enforce one. |
 | `AdminBypass` | Lets admins ignore portal limits, PIN locks and item filters. |
 | `AllowTames` | Whether tamed creatures follow you through. |
+| `MenuOpenDistance` | `1`–`10` metres, default `2.5`. How close you must be before the destination window opens by itself. Vanilla's portal range is 5 m, which puts it in your face while you are still walking up. The portal's glow and connection effect keep their own range regardless. |
 | `EnableCustomVFX` | Replaces vanilla portal particles with the runic gateway. |
 | `EnablePortalCameraShot` | Whether placing a portal captures a preview snapshot. |
 | `SnapshotRefreshIntervalMinutes` | Interval for the background snapshot refresh. `0` to disable. |
+| `PortalIndexRefreshSeconds` | `5`–`300`. How often the server rescans the world and republishes the destination list — how quickly a new portal, rename or demolition reaches everyone. Only sent when something actually changed. |
 
 ### Local to your game (not synced — set these however you like)
 | Setting | What it does |

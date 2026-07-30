@@ -10,7 +10,7 @@ namespace TortalPortal
     {
         public const string PluginGUID = "wubarrk.TortalPortal";
         public const string PluginName = "TortalPortal";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.1";
 
         private readonly Harmony _harmony = new Harmony(PluginGUID);
 
@@ -21,7 +21,8 @@ namespace TortalPortal
             typeof(PortalBehaviorPatch),
             typeof(SecurityPatch),
             typeof(TamesPatch),
-            typeof(VFXPatch)
+            typeof(VFXPatch),
+            typeof(InputFocusPatch)
         };
 
         public static Plugin Instance;
@@ -33,6 +34,10 @@ namespace TortalPortal
             Log = Logger;
 
             Configuration.Init(Config);
+
+            // Has to happen before ZNet.Awake wires up the ConfigSync RPCs, or the portal index would not be
+            // part of the login handshake.
+            PortalRegistry.Init();
 
             ApplyPatches();
 
