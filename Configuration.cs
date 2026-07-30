@@ -10,14 +10,26 @@ namespace TortalPortal
         BypassAll
     }
 
+    // The five free icons from vanilla's own map-pin menu. Values match Minimap.PinType, where Icon4 is 6
+    // rather than 4 - Death and Bed sit between them - so these are spelled out rather than counted.
+    public enum PortalPinIcon
+    {
+        Icon0 = 0,
+        Icon1 = 1,
+        Icon2 = 2,
+        Icon3 = 3,
+        Icon4 = 6
+    }
+
     public static class Configuration
     {
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.0.1",
-            // 1.0.0 clients have no portal index and would show an empty destination window against a
-            // 1.0.1 server, so they are turned away rather than left wondering.
+            CurrentVersion = "1.0.2",
+            // Still 1.0.1: that is where the portal index was introduced, and 1.0.2 changed nothing about
+            // its format. A 1.0.0 client has no index at all and would show an empty destination window, so
+            // it is turned away rather than left wondering.
             MinimumRequiredVersion = "1.0.1"
         };
 
@@ -41,6 +53,8 @@ namespace TortalPortal
         public static ConfigEntry<int> snapshotRefreshIntervalMinutes;
         public static ConfigEntry<float> portalIndexRefreshSeconds;
         public static ConfigEntry<float> uiTextScale;
+        public static ConfigEntry<bool> showPortalPinsOnMap;
+        public static ConfigEntry<PortalPinIcon> portalPinIcon;
         public static ConfigEntry<bool> enableDebugMode;
 
         public static void Init(ConfigFile config)
@@ -73,6 +87,13 @@ namespace TortalPortal
                 new ConfigDescription("How often the server rescans the world for portals and republishes the destination list. Renames, new portals and demolitions show up within this window. Only republished when something actually changed.",
                                       new AcceptableValueRange<float>(5f, 300f)));
             
+            // Local, like the rest of the map and UI preferences below: where a player likes their own map
+            // marked is not the server's business.
+            showPortalPinsOnMap = config.Bind("3 - Features", "ShowPortalPinsOnMap", true,
+                "Marks every portal in the destination list on the large map while that window is open, labelled with its name. The markers are never saved and are removed when the window closes, so they cannot silt up your own pin list.");
+            portalPinIcon = config.Bind("3 - Features", "PortalPinIcon", PortalPinIcon.Icon4,
+                "Which map icon to use for those markers. These are the same five icons vanilla offers in its own map-pin menu - pick whichever reads best against your pins.");
+
             // Also local-only, and picked up live: the theme rebuilds its styles when this changes.
             uiTextScale = config.Bind("3 - Features", "UITextScale", 1f,
                 new ConfigDescription("Scales all text in the portal windows. 1 is the designed size.",

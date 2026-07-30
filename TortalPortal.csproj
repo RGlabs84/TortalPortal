@@ -4,7 +4,7 @@
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>TortalPortal</AssemblyName>
     <Description>Total Portal Control System for Valheim</Description>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>TortalPortal</RootNamespace>
@@ -28,6 +28,11 @@
     </Reference>
     <Reference Include="assembly_utils">
       <HintPath>..\libs-Tools\assembly_utils.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Minimap.AddPin takes an optional PlatformUserID, so calling it needs this on hand. -->
+    <Reference Include="Splatform">
+      <HintPath>..\libs-Tools\Splatform.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="BepInEx">

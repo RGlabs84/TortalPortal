@@ -4,7 +4,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Assets](https://img.shields.io/badge/Assets-100%25_Procedural-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.0.1-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.0.2-lightgrey.svg)]()
 
 > *"The old way was to carve a name into the stone and hope another bore the same. A tally of runes, scratched and rescratched, and still you stepped through blind. Better to know the road before you walk it, Viking."*
 
@@ -20,6 +20,8 @@ Lock your gates behind a PIN. Bring the wolves. Decide exactly what may and may 
 Step into range and the destination window opens: every portal in the world, sorted by name, each showing its lock state, its biome, how far it is from you, and who raised it. Search by name to cut a long list down. Selecting a destination pins it on the **Large Minimap**, which opens alongside the window, so you always see the route in context rather than guessing from a tag.
 
 The list is built by the **server**, which is the only machine that holds the whole world, and handed to each player as they log in — so it is complete from the first portal you touch. Install it on a world that has been running for months and the startup scan finds every gate already standing in it; you do not have to go and visit them first.
+
+Every portal is **marked on the great map** while the window is open, labelled with its name, the one you have chosen drawn at twice the size — and the map centres clear of the window rather than behind it, so you are looking at the country around your destination instead of the back of a frame. The marks are never saved and vanish when the window closes; your own pins are your own business.
 
 Walk away and the window closes itself. Arrive somewhere and it stays shut, so you are never greeted by a menu the instant you land — step off and walk back to bring it up again.
 
@@ -60,7 +62,7 @@ A built-in bypass lets admins ignore PIN locks, item filters and portal placemen
 - **Configure it** — walk up and press `E`. Set its name and toggle a PIN lock.
 - **Travel** — walk into the portal's range. Pick a destination from the list; the big map marks it, and clicking its picture shows you the place full screen. Hit **Teleport**.
 - **On arrival** — the menu stays shut so you can get on with it. Step away and walk back to bring it up again.
-- **Typing** — click into the search, PIN or name field and the keyboard is yours alone; your character stands still and hotkeys hold their peace. `Escape` hands it back without closing the window.
+- **Typing** — the destination window focuses its filter box as it opens, so you can just start typing a name. While any of the mod's fields has the keyboard your character stands still and hotkeys hold their peace. `Escape` hands it back without closing the window.
 
 ---
 
@@ -90,6 +92,8 @@ Settings live in `wubarrk.TortalPortal.cfg`.
 | :--- | :--- |
 | `UITextScale` | `0.6`–`2.0`. Scales all portal UI text and the layout around it. Applies immediately, no restart. |
 | `VFXOrbHeightOffset` | Metres to nudge the rune orb up or down inside the gate. The orb auto-centres on each portal's arch, so this is only for fine-tuning. |
+| `ShowPortalPinsOnMap` | Default on. Marks every listed portal on the large map while the destination window is open. Never saved, removed when the window closes. |
+| `PortalPinIcon` | Which of vanilla's five map-pin icons the markers use. Default `Icon4`. |
 | `EnableDebugLogging` | Verbose logging for UI and teleport events. |
 
 ---

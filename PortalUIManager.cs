@@ -36,11 +36,13 @@ namespace TortalPortal
             public string SearchKey;
             public bool Locked;
             public DetailState Details;
+            public Minimap.PinData MapPin;
         }
 
         private enum DetailState { Pending, Resolved, Unavailable }
 
         private readonly List<PortalEntry> _entries = new List<PortalEntry>();
+        private readonly List<Minimap.PinData> _pins = new List<Minimap.PinData>();
         private PortalEntry _selected;
         private Coroutine _detailFetch;
 
@@ -62,13 +64,28 @@ namespace TortalPortal
         private const string ConfigNameFieldName = "TortalPortal.ConfigName";
         private const string ConfigPinFieldName = "TortalPortal.ConfigPin";
 
-        private static bool _textInputActive;
+        private static bool _fieldFocused;
 
         // Set by HideUI, acted on in OnGUI: dropping IMGUI focus has to happen inside OnGUI, and HideUI is
         // called from the portal update tick.
         private bool _releaseFocus;
 
-        public static bool IsTextInputActive() => _textInputActive;
+        // Focus the search box as the window opens, so you can start typing a portal's name the moment it
+        // appears instead of hunting for the field with the mouse.
+        private bool _focusSearchPending;
+
+        // "The mod has the keyboard." True while one of our fields is focused, and unconditionally while the
+        // configuration window is up - that one is a modal opened deliberately with E, so nothing else should
+        // be listening. The destination window is deliberately NOT included: it opens over the large map and
+        // the player still needs the map's own pan and zoom keys while choosing where to go.
+        public static bool IsTextInputActive()
+        {
+            if (_fieldFocused) return true;
+            return _instance != null && _instance._isVisible && _instance._isConfigMode;
+        }
+
+        // "The mod needs the mouse." Either window, both modes - see InputFocusPatch.
+        public static bool WantsCursor() => _instance != null && _instance._isVisible;
 
         public static void Init()
         {
@@ -90,6 +107,8 @@ namespace TortalPortal
             CurrentSourcePortal = sourcePortal;
             _instance._isConfigMode = false;
             _instance._isVisible = true;
+            _instance._searchFilter = "";
+            _instance._focusSearchPending = true;
             _instance.BuildEntries();
             Configuration.LogDebug($"Found {_instance._entries.Count} destination portals.");
 
@@ -98,6 +117,8 @@ namespace TortalPortal
                 Configuration.LogDebug("Opening Large Minimap.");
                 Minimap.instance.SetMapMode(Minimap.MapMode.Large);
             }
+
+            _instance.AddMapPins();
         }
 
         public static void ShowConfigUI(TeleportWorld targetPortal)
@@ -128,12 +149,14 @@ namespace TortalPortal
                 _instance._showPinPrompt = false;
                 _instance._pinInput = "";
                 _instance._previewExpanded = false;
+                _instance._focusSearchPending = false;
                 _instance.StopDetailFetch();
+                _instance.ClearMapPins();
                 _instance.ClearPreview();
 
                 // Hand the keyboard straight back rather than waiting for the next OnGUI, so the player is
                 // never left standing still for a frame after the window closes.
-                _textInputActive = false;
+                _fieldFocused = false;
                 _instance._releaseFocus = true;
             }
 
@@ -227,7 +250,7 @@ namespace TortalPortal
             if (_releaseFocus)
             {
                 _releaseFocus = false;
-                _textInputActive = false;
+                _fieldFocused = false;
                 GUI.FocusControl(null);
                 GUIUtility.keyboardControl = 0;
             }
@@ -237,7 +260,7 @@ namespace TortalPortal
 
             // Escape backs out of a field without closing the window, so there is always a way to hand the
             // keyboard back that is not "click somewhere harmless".
-            if (_textInputActive && Event.current != null &&
+            if (_fieldFocused && Event.current != null &&
                 Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
             {
                 _releaseFocus = true;
@@ -259,18 +282,25 @@ namespace TortalPortal
             // Deliberately not auto-focused anywhere: the destination window opens by itself when you walk
             // up to a portal, so grabbing the keyboard unasked would strand the player mid-stride.
             string focused = GUI.GetNameOfFocusedControl();
-            _textInputActive = focused == SearchFieldName || focused == PinFieldName ||
-                               focused == ConfigNameFieldName || focused == ConfigPinFieldName;
+            _fieldFocused = focused == SearchFieldName || focused == PinFieldName ||
+                            focused == ConfigNameFieldName || focused == ConfigPinFieldName;
         }
 
-        private void DrawSelectUI()
+        // Shared so the map-centring maths knows exactly how much of the screen the window is covering,
+        // rather than guessing at it.
+        private static Rect SelectWindowRect()
         {
             // Grows with the text scale, but never off the screen.
             float w = Mathf.Min(Screen.width - 120f, TortalUITheme.S(860f));
             float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(660f));
             // Pinned left so the large map, which we opened, stays readable on the right.
             float x = Mathf.Max(20f, Mathf.Min(52f, Screen.width - w - 20f));
-            Rect win = new Rect(x, Mathf.Round((Screen.height - h) * 0.5f), w, h);
+            return new Rect(x, Mathf.Round((Screen.height - h) * 0.5f), w, h);
+        }
+
+        private void DrawSelectUI()
+        {
+            Rect win = SelectWindowRect();
 
             TortalUITheme.DrawWindow(win, "Total Portal Control");
 
@@ -289,6 +319,13 @@ namespace TortalPortal
             _searchFilter = GUI.TextField(new Rect(search.x + labelW + 4f, search.y, search.width - labelW - 4f, search.height),
                                           _searchFilter, 32, TortalUITheme.Field);
 
+            // Has to happen after the control exists, so it cannot be done in ShowUI.
+            if (_focusSearchPending)
+            {
+                _focusSearchPending = false;
+                GUI.FocusControl(SearchFieldName);
+            }
+
             float closeW = TortalUITheme.S(92f);
             if (GUI.Button(new Rect(right.xMax - closeW, search.y, closeW, rowH), "Close", TortalUITheme.Button))
             {
@@ -304,7 +341,7 @@ namespace TortalPortal
             DrawDetails(detail);
 
             GUI.Label(TortalUITheme.FooterLine(win),
-                      "Pick a destination to preview it  ·  the map marks the selection  ·  close the map to cancel",
+                      "Type to filter  ·  every portal is marked on the map, the selected one twice the size  ·  Esc frees the keyboard  ·  close the map to cancel",
                       TortalUITheme.Footer);
         }
 
@@ -355,7 +392,101 @@ namespace TortalPortal
             e.Details = DetailState.Pending;
             _detailFetch = StartCoroutine(ResolveDetails(e));
 
-            if (Minimap.instance != null) Minimap.instance.ShowPointOnMap(e.Pos);
+            HighlightPin(e);
+            ShowPointClearOfWindow(e.Pos);
+        }
+
+        // ---- map ---------------------------------------------------------------------------------------
+
+        // Centring the map on the chosen portal put it squarely behind this window, which is pinned to the
+        // left half of the screen. Shifting the centre west by half the window's width lands the selection
+        // in the middle of the strip of map the player can actually see.
+        //
+        // Computed from the map's own zoom and image aspect rather than a fudge factor, so it stays correct
+        // at any resolution, UI scale or zoom level.
+        private static void ShowPointClearOfWindow(Vector3 point)
+        {
+            Minimap map = Minimap.instance;
+            if (map == null) return;
+
+            float shift = 0f;
+            try
+            {
+                RectTransform image = map.m_mapImageLarge != null ? map.m_mapImageLarge.transform as RectTransform : null;
+                if (image != null && Screen.width > 0 && image.rect.height > 0f)
+                {
+                    // How much world the large map spans from screen edge to screen edge.
+                    float aspect = image.rect.width / image.rect.height;
+                    float worldWidth = map.m_largeZoom * aspect * map.m_textureSize * map.m_pixelSize;
+
+                    // Middle of whatever the window is not covering.
+                    float freeCentre = Mathf.Clamp01((SelectWindowRect().xMax / Screen.width + 1f) * 0.5f);
+                    shift = (freeCentre - 0.5f) * worldWidth;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Falling through with shift 0 just centres it the old way - worth having the map at all.
+                shift = 0f;
+                Plugin.Log.LogError($"TortalPortal: could not offset the map for the window (non-fatal). Reason: {ex}");
+            }
+
+            map.ShowPointOnMap(new Vector3(point.x - shift, point.y, point.z));
+        }
+
+        // Vanilla marks nothing on the map for a portal, so a list of names was the only clue where any of
+        // them actually were. These are transient - never saved, and removed the moment the window closes -
+        // so they cannot silt up somebody's pin list.
+        private void AddMapPins()
+        {
+            ClearMapPins();
+            if (!Configuration.showPortalPinsOnMap.Value || Minimap.instance == null) return;
+
+            try
+            {
+                Minimap.PinType icon = (Minimap.PinType)(int)Configuration.portalPinIcon.Value;
+                foreach (PortalEntry e in _entries)
+                {
+                    e.MapPin = Minimap.instance.AddPin(e.Pos, icon, e.Tag, false, false);
+                    if (e.MapPin != null) _pins.Add(e.MapPin);
+                }
+
+                Configuration.LogDebug($"Marked {_pins.Count} portals on the map.");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: could not mark portals on the map (non-fatal). Reason: {ex}");
+            }
+        }
+
+        private void ClearMapPins()
+        {
+            if (_pins.Count == 0) return;
+
+            try
+            {
+                if (Minimap.instance != null)
+                {
+                    foreach (Minimap.PinData pin in _pins) Minimap.instance.RemovePin(pin);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: could not clear the portal map markers (non-fatal). Reason: {ex}");
+            }
+
+            _pins.Clear();
+            foreach (PortalEntry e in _entries) e.MapPin = null;
+        }
+
+        // The chosen destination is drawn at double size, so the row you clicked and the mark on the map
+        // read as the same thing.
+        private void HighlightPin(PortalEntry selected)
+        {
+            foreach (PortalEntry e in _entries)
+            {
+                if (e.MapPin != null) e.MapPin.m_doubleSize = e == selected;
+            }
         }
 
         private void StopDetailFetch()

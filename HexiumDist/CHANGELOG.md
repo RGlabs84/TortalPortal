@@ -1,5 +1,19 @@
 # Changelog - TortalPortal
 
+## [1.0.2]
+
+### Interface
+- **Fixed:** The configuration window opened with the mouse still locked to the camera and invisible, so the name and PIN fields could be looked at but not clicked. Valheim frees the cursor only for windows it knows by name — the map, the inventory, the store — and ours were not on that list. They are now, both of them. (The destination window got away with it only because it opens the large map.)
+- **Fixed:** The configuration window is a modal opened deliberately with `E`, so it now holds the keyboard and the mouse outright rather than letting them half-reach the game underneath.
+- **Added:** The destination window focuses its filter box the moment it opens, and clears the previous search. Walk up, start typing. `Escape` still hands the keyboard back without closing the window.
+
+### Map
+- **Added:** Every portal in the list is now marked on the large map, labelled with its name, with the selected one drawn at double size — vanilla marks nothing for a portal, so a list of names was the only clue where any of them were. The markers are never saved and are removed when the window closes, so they cannot silt up your own pin list. `ShowPortalPinsOnMap` turns them off; `PortalPinIcon` picks which of vanilla's five pin icons to use.
+- **Fixed:** Selecting a destination centred the map on it — squarely behind the destination window, which covers the left half of the screen. The map now centres clear of the window, so the selection lands in the middle of the part you can actually see. Worked out from the map's own zoom and aspect, so it holds at any resolution, UI scale or zoom level.
+
+### Compatibility
+- Minimum required version stays at 1.0.1 — the portal index format is unchanged, so a 1.0.1 client works against a 1.0.2 server.
+
 ## [1.0.1]
 
 ### Multiplayer
