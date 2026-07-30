@@ -1,0 +1,12 @@
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+.idea/
+.vs/
+*.user
+*.suo
+*.pdb
+
+# Machine-local agent settings (absolute paths, local profile names)
+.claude/settings.local.json
