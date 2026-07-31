@@ -23,19 +23,15 @@ namespace TortalPortal
                 var nview = __instance.GetComponent<ZNetView>();
                 if (nview == null || !nview.IsValid()) return true;
 
-                long creatorID = nview.GetZDO().GetLong(ZDOVars.s_creator);
-                long playerID = Game.instance.GetPlayerProfile().GetPlayerID();
-
-                if (creatorID == playerID || Configuration.IsAdmin())
+                if (CanConfigure(__instance))
                 {
                     Configuration.LogDebug("Access granted for portal configuration. Showing Config UI.");
-                    // Owner or Admin can set PIN and Name
                     PortalUIManager.ShowConfigUI(__instance);
                     __result = true;
                     return false;
                 }
 
-                Configuration.LogDebug($"Access denied. CreatorID: {creatorID}, PlayerID: {playerID}, IsAdmin: {Configuration.IsAdmin()}");
+                Configuration.LogDebug("Access denied for portal configuration - not the creator and not an admin.");
 
                 __result = true; // Let vanilla handle normal tags if they want, or we can just block it
                 return false;
@@ -44,6 +40,31 @@ namespace TortalPortal
             {
                 Plugin.Log.LogError($"TortalPortal: {nameof(TeleportWorld_Interact_Prefix)} failed, falling back to vanilla interact. Reason: {ex}");
                 return true;
+            }
+        }
+
+        // Who is allowed to rename a portal or set its PIN: whoever built it, plus server admins.
+        //
+        // Shared with the destination window's "Name & PIN" button so the two routes into the configuration
+        // window can never disagree about that. Fails closed - a portal we cannot read is not one we should
+        // be offering to reconfigure.
+        public static bool CanConfigure(TeleportWorld portal)
+        {
+            try
+            {
+                if (portal == null || Game.instance == null) return false;
+
+                ZNetView nview = portal.GetComponent<ZNetView>();
+                if (nview == null || !nview.IsValid()) return false;
+
+                long creatorID = nview.GetZDO().GetLong(ZDOVars.s_creator);
+                long playerID = Game.instance.GetPlayerProfile().GetPlayerID();
+                return creatorID == playerID || Configuration.IsAdmin();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: {nameof(CanConfigure)} failed, treating the portal as not configurable. Reason: {ex}");
+                return false;
             }
         }
 

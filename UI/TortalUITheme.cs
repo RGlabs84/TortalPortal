@@ -43,6 +43,10 @@ namespace TortalPortal
         // through S() so they grow with the font instead of clipping it.
         public static float TextScale { get; private set; } = 1f;
 
+        // UIFontSizeDelta: a flat point offset applied after the scale. Fatty's port of this theme carries
+        // the same knob at the same +2 default, so both mods' windows read at one size out of the box.
+        private static int _fontDelta;
+
         public static float S(float v) => Mathf.Round(v * TextScale);
 
         private const int CornerTile = 84;      // corner texture is square
@@ -76,7 +80,11 @@ namespace TortalPortal
                 // Styles are cheap to rebuild and textures are not, so UITextScale is picked up live without
                 // regenerating a single pixel of ornament.
                 float wanted = Configuration.uiTextScale != null ? Configuration.uiTextScale.Value : 1f;
-                if (Title == null || !Mathf.Approximately(wanted, TextScale)) BuildStyles(wanted);
+                int wantedDelta = Configuration.uiFontSizeDelta != null ? Configuration.uiFontSizeDelta.Value : 0;
+                if (Title == null || !Mathf.Approximately(wanted, TextScale) || wantedDelta != _fontDelta)
+                {
+                    BuildStyles(wanted, wantedDelta);
+                }
                 return;
             }
 
@@ -108,7 +116,8 @@ namespace TortalPortal
 
             _fieldTex = BuildPatch(new Color(0.03f, 0.03f, 0.025f, 0.95f), GoldDeep);
 
-            BuildStyles(Configuration.uiTextScale != null ? Configuration.uiTextScale.Value : 1f);
+            BuildStyles(Configuration.uiTextScale != null ? Configuration.uiTextScale.Value : 1f,
+                        Configuration.uiFontSizeDelta != null ? Configuration.uiFontSizeDelta.Value : 0);
         }
 
         // ---- window chrome -------------------------------------------------------------------------------
@@ -221,11 +230,17 @@ namespace TortalPortal
 
         // ---- styles --------------------------------------------------------------------------------------
 
-        private static void BuildStyles(float scale)
+        private static void BuildStyles(float scale, int fontDelta)
         {
             TextScale = Mathf.Clamp(scale, 0.6f, 2f);
-            TitleHeight = 26f + Mathf.Round(28f * TextScale);
-            FooterHeight = Mathf.Max(30f, Mathf.Round(30f * TextScale));
+            _fontDelta = Mathf.Clamp(fontDelta, -6, 12);
+
+            // The title and footer bands have to grow with the delta as well as the scale, or a positive
+            // delta just clips the text they exist to hold. Only a POSITIVE delta widens them - shrinking the
+            // text must not pull the title band up into the crest, which is fixed ornament at 26px.
+            float slack = Mathf.Max(0, _fontDelta);
+            TitleHeight = 26f + Mathf.Round(28f * TextScale) + Mathf.Round(slack * 1.5f);
+            FooterHeight = Mathf.Max(30f, Mathf.Round(30f * TextScale) + slack);
 
             Font font = FindFont();
 
@@ -272,9 +287,11 @@ namespace TortalPortal
             Field.active.textColor = Parchment;
         }
 
+        // Scale first, then the flat delta - so UITextScale stays a proportional zoom of the whole window and
+        // the delta stays worth exactly what it says in points, whatever the scale is set to.
         private static int Pt(int designSize)
         {
-            return Mathf.Max(8, Mathf.RoundToInt(designSize * TextScale));
+            return Mathf.Max(8, Mathf.RoundToInt(designSize * TextScale) + _fontDelta);
         }
 
         private static GUIStyle Text(Font font, int size, FontStyle fs, Color colour, TextAnchor anchor)

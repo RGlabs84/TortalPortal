@@ -126,11 +126,31 @@ namespace TortalPortal
             Configuration.LogDebug("PortalUIManager.ShowConfigUI called.");
             if (_instance == null) Init();
 
+            ZNetView nview = targetPortal != null ? targetPortal.GetComponent<ZNetView>() : null;
+            if (nview == null || !nview.IsValid())
+            {
+                Configuration.LogDebug("ShowConfigUI called for a portal with no valid ZNetView. Ignoring.");
+                return;
+            }
+
+            // Reachable from the destination window's "Name & PIN" button as well as from Interact, so the
+            // select-mode state has to be torn down here rather than assumed absent. The map pins matter
+            // most: they are added to the shared Minimap pin list, so leaving them behind would strand them
+            // on the small minimap for as long as the configuration window is up.
+            _instance.StopDetailFetch();
+            _instance.ClearMapPins();
+            _instance.ClearPreview();
+            _instance._selected = null;
+            _instance._previewExpanded = false;
+            _instance._showPinPrompt = false;
+            _instance._pinInput = "";
+            _instance._focusSearchPending = false;
+
             CurrentSourcePortal = targetPortal;
             _instance._isConfigMode = true;
             _instance._isVisible = true;
 
-            ZDO zdo = targetPortal.GetComponent<ZNetView>().GetZDO();
+            ZDO zdo = nview.GetZDO();
             _instance._configName = zdo.GetString(ZDOVars.s_tag);
             _instance._configPin = zdo.GetString("PortalPIN");
             _instance._configHasPin = !string.IsNullOrEmpty(_instance._configPin);
@@ -279,8 +299,10 @@ namespace TortalPortal
             else if (_previewExpanded && _previewTex != null && _selected != null) DrawExpandedPreview();
             else DrawSelectUI();
 
-            // Deliberately not auto-focused anywhere: the destination window opens by itself when you walk
-            // up to a portal, so grabbing the keyboard unasked would strand the player mid-stride.
+            // The destination window's search box IS auto-focused on open, which means this mod holds the
+            // keyboard from the moment you walk up to a portal - and therefore that Valheim's own Use key is
+            // suppressed for as long as it does. Anything that used to be reached by pressing E at an open
+            // window needs its own on-screen control instead; see the "Name & PIN" button in DrawSelectUI.
             string focused = GUI.GetNameOfFocusedControl();
             _fieldFocused = focused == SearchFieldName || focused == PinFieldName ||
                             focused == ConfigNameFieldName || focused == ConfigPinFieldName;
@@ -327,7 +349,25 @@ namespace TortalPortal
             }
 
             float closeW = TortalUITheme.S(92f);
-            if (GUI.Button(new Rect(right.xMax - closeW, search.y, closeW, rowH), "Close", TortalUITheme.Button))
+            Rect closeRect = new Rect(right.xMax - closeW, search.y, closeW, rowH);
+
+            // The way in to this portal's own name and PIN, and the ONLY reliable one while this window is
+            // up. Pressing E again cannot work here: the search field above takes the keyboard the moment the
+            // window opens, InputFocusPatch reports that to Chat.HasFocus, and Valheim gates its Use key
+            // behind Player.TakeInput() - so the keypress never reaches TeleportWorld.Interact at all. That
+            // is what made the configuration window look like it needed several tries to open; whether it
+            // worked came down to whether the field happened to hold focus at that moment.
+            if (SecurityPatch.CanConfigure(CurrentSourcePortal))
+            {
+                float editW = TortalUITheme.S(128f);
+                if (GUI.Button(new Rect(closeRect.x - editW - 8f, search.y, editW, rowH), "Name & PIN", TortalUITheme.Button))
+                {
+                    ShowConfigUI(CurrentSourcePortal);
+                    return;
+                }
+            }
+
+            if (GUI.Button(closeRect, "Close", TortalUITheme.Button))
             {
                 HideUI();
                 return;
@@ -419,9 +459,7 @@ namespace TortalPortal
                     float aspect = image.rect.width / image.rect.height;
                     float worldWidth = map.m_largeZoom * aspect * map.m_textureSize * map.m_pixelSize;
 
-                    // Middle of whatever the window is not covering.
-                    float freeCentre = Mathf.Clamp01((SelectWindowRect().xMax / Screen.width + 1f) * 0.5f);
-                    shift = (freeCentre - 0.5f) * worldWidth;
+                    shift = (FreeCentreFraction() - 0.5f) * worldWidth;
                 }
             }
             catch (Exception ex)
@@ -432,6 +470,27 @@ namespace TortalPortal
             }
 
             map.ShowPointOnMap(new Vector3(point.x - shift, point.y, point.z));
+        }
+
+        // Middle of whatever the destination window is NOT covering, as a 0-1 fraction of the screen width.
+        // The map centres on it and the centre message moves to it, so "the part you can actually see" is one
+        // number in one place rather than two that can drift apart.
+        private static float FreeCentreFraction()
+        {
+            if (Screen.width <= 0) return 0.5f;
+            return Mathf.Clamp01((SelectWindowRect().xMax / Screen.width + 1f) * 0.5f);
+        }
+
+        // How far, in screen pixels, Valheim's centre message has to move to clear the destination window.
+        // Zero when there is nothing to clear, which is the signal to put it back where vanilla had it.
+        //
+        // Deliberately only the destination window. The configuration window is centred and narrow, and the
+        // one message it raises fires as it closes, so there is nothing to dodge.
+        public static float CentreMessageOffset()
+        {
+            if (_instance == null || !_instance._isVisible || _instance._isConfigMode) return 0f;
+            if (Screen.width <= 0) return 0f;
+            return (FreeCentreFraction() - 0.5f) * Screen.width;
         }
 
         // Vanilla marks nothing on the map for a portal, so a list of names was the only clue where any of

@@ -26,10 +26,11 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.0.2",
-            // Still 1.0.1: that is where the portal index was introduced, and 1.0.2 changed nothing about
-            // its format. A 1.0.0 client has no index at all and would show an empty destination window, so
-            // it is turned away rather than left wondering.
+            CurrentVersion = "1.0.3",
+            // Still 1.0.1: that is where the portal index was introduced, and nothing since has changed its
+            // format - 1.0.3 only adds a client-local font size and an on-screen button, neither of which
+            // crosses the wire. A 1.0.0 client has no index at all and would show an empty destination
+            // window, so it is turned away rather than left wondering.
             MinimumRequiredVersion = "1.0.1"
         };
 
@@ -53,6 +54,7 @@ namespace TortalPortal
         public static ConfigEntry<int> snapshotRefreshIntervalMinutes;
         public static ConfigEntry<float> portalIndexRefreshSeconds;
         public static ConfigEntry<float> uiTextScale;
+        public static ConfigEntry<int> uiFontSizeDelta;
         public static ConfigEntry<bool> showPortalPinsOnMap;
         public static ConfigEntry<PortalPinIcon> portalPinIcon;
         public static ConfigEntry<bool> enableDebugMode;
@@ -98,6 +100,10 @@ namespace TortalPortal
             uiTextScale = config.Bind("3 - Features", "UITextScale", 1f,
                 new ConfigDescription("Scales all text in the portal windows. 1 is the designed size.",
                                       new AcceptableValueRange<float>(0.6f, 2f)));
+            uiFontSizeDelta = config.Bind("3 - Features", "UIFontSizeDelta", 2,
+                new ConfigDescription(
+                    "FLAT points added to every text size in the portal windows, applied after UITextScale. Defaults to +2 to match Fatty, which shares this theme and runs the same +2 - set both to the same number and the two mods' windows read identically. 0 = the theme's own base sizes.",
+                    new AcceptableValueRange<int>(-6, 12)));
 
             enableDebugMode = config.Bind("4 - Debug", "EnableDebugLogging", false, "Enable verbose logging to the console for debugging UI and teleportation events.");
 

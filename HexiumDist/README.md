@@ -4,7 +4,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Assets](https://img.shields.io/badge/Assets-100%25_Procedural-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.0.2-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.0.3-lightgrey.svg)]()
 
 > *"The old way was to carve a name into the stone and hope another bore the same. A tally of runes, scratched and rescratched, and still you stepped through blind. Better to know the road before you walk it, Viking."*
 

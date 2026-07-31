@@ -1,5 +1,19 @@
 # Changelog - TortalPortal
 
+## [1.0.3]
+
+### Interface
+- **Fixed:** The name and PIN window took several attempts to open. 1.0.2 gave the destination window's filter box the keyboard as soon as it appeared, and Valheim gates its own `Use` key behind "is anything typing right now" — so `E` was being swallowed before it ever reached the portal. Whether it worked came down to whether the filter box happened to hold focus at that instant, which is why it looked intermittent. There is now a **Name & PIN** button in the destination window, so the way in is a button you can see rather than a keypress racing the focus. `E` still opens it directly when no window is up.
+- **Fixed:** Messages like "Incorrect PIN!" appeared in the centre of the screen — behind the destination window, which covers the left half of it. They now shift to the clear side, using the same measurement the map already centres by, so the message and the map agree on which half you can see. Worked out from the HUD's own canvas scale, so it holds at any resolution and UI scale, and the message goes straight back to where vanilla puts it as soon as the window closes.
+- **Added:** `UIFontSizeDelta` — a flat point offset on every bit of text in the portal windows, applied on top of `UITextScale`. Defaults to **+2** to match Fatty, which shares this exact theme and ships the same +2; set both mods to the same number and their windows read at one size. The title and footer bands grow with it so nothing clips.
+
+### Under the hood
+- The "who may rename this portal" test (its builder, plus server admins) is now one shared check rather than two copies, so the button and `E` can never disagree about it.
+- Opening the configuration window from the destination window tears down the map markers and preview properly, instead of leaving portal markers stranded on the small minimap.
+
+### Compatibility
+- Minimum required version stays at 1.0.1 — the portal index format is unchanged, and everything above is client-side, so a 1.0.1 client works against a 1.0.3 server.
+
 ## [1.0.2]
 
 ### Interface
