@@ -10,3 +10,6 @@
 
 # Machine-local agent settings (absolute paths, local profile names)
 .claude/settings.local.json
+
+# Left behind when a HexiumDist package gets unpacked in place - the zip beside it is the artifact
+HexiumDist/TortalPortal-v*/

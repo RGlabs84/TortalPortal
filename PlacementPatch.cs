@@ -14,7 +14,15 @@ namespace TortalPortal
         [HarmonyPostfix]
         public static void ZNet_Start_Postfix()
         {
-            InitializeBackgroundSnapshot();
+            try
+            {
+                PortalRegistry.OnZNetStart();
+                InitializeBackgroundSnapshot();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: {nameof(ZNet_Start_Postfix)} failed. Reason: {ex}");
+            }
         }
 
         [HarmonyPatch(typeof(Player), nameof(Player.UpdatePlacement))]
@@ -112,18 +120,35 @@ namespace TortalPortal
             }
         }
 
+        // Every portal this peer knows about. On the server that is the whole world; on a client it is the
+        // portals loaded around them, which is all a client is ever sent - see PortalRegistry for why the
+        // destination list cannot be built from this.
         public static List<ZDO> GetAllPortals()
         {
             List<ZDO> allZdos = new List<ZDO>();
             if (ZDOMan.instance == null) return allZdos;
-            
+
+            // ZDOMan keeps its own portal list, maintained as ZDOs are loaded, received and destroyed. It
+            // covers every prefab in Game.PortalPrefabHash, so modded portal pieces come along for free, and
+            // it does not walk every sector in the world the way the prefab scan below does.
+            List<ZDO> known = ZDOMan.instance.GetPortals();
+            if (known != null)
+            {
+                foreach (ZDO zdo in known)
+                {
+                    if (zdo != null && zdo.IsValid()) allZdos.Add(zdo);
+                }
+            }
+            if (allZdos.Count > 0) return allZdos;
+
+            // Belt and braces for a world that somehow loaded without that list populated.
             int index = 0;
             while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative("portal_wood", allZdos, ref index)) { }
             index = 0;
             while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative("portal_stone", allZdos, ref index)) { }
             index = 0;
             while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative("portal_blackmarble", allZdos, ref index)) { }
-            
+
             return allZdos;
         }
 
@@ -148,46 +173,92 @@ namespace TortalPortal
             TakeSnapshotCore(portalTransform);
         }
 
+        // How often the backfill looks around for a portal that has never been photographed.
+        private const float BackfillScanSeconds = 15f;
+
+        private static Coroutine _snapshotRoutine;
+
         public static void InitializeBackgroundSnapshot()
         {
-            if (ZNet.instance != null && ZNet.instance.IsServer())
-            {
-                Plugin.Instance.StartCoroutine(BackgroundSnapshotRoutine());
-            }
+            // A snapshot is a camera render, so only a peer that actually draws the world can take one. A
+            // dedicated server draws nothing - which is why 1.0.0, where this ran server-side only, left
+            // every portal on a dedicated server without a photograph indefinitely.
+            if (ZNet.instance == null || ZNet.instance.IsDedicated()) return;
+
+            // ZNet.Start runs again on every world load; these coroutines live on the plugin object, which
+            // does not get torn down with the world.
+            if (_snapshotRoutine != null) Plugin.Instance.StopCoroutine(_snapshotRoutine);
+            _snapshotRoutine = Plugin.Instance.StartCoroutine(BackgroundSnapshotRoutine());
         }
 
         private static IEnumerator BackgroundSnapshotRoutine()
         {
+            float nextRefresh = Time.realtimeSinceStartup + 60f;
+
             while (true)
             {
-                int interval = Configuration.snapshotRefreshIntervalMinutes.Value;
-                if (interval <= 0)
+                yield return new WaitForSeconds(BackfillScanSeconds);
+
+                if (!Configuration.enablePortalCameraShot.Value ||
+                    ZNetScene.instance == null || ZDOMan.instance == null || Player.m_localPlayer == null)
                 {
-                    yield return new WaitForSeconds(60f); // Check again next minute if config changes
                     continue;
                 }
 
-                yield return new WaitForSeconds(interval * 60f);
-                if (ZNetScene.instance == null || ZDOMan.instance == null) continue;
+                // Gaps first. A world that already had portals when the mod was installed has none of them
+                // photographed, and this is what fills them in: each player shoots the portals loaded around
+                // them, so between everyone playing the network completes itself.
+                yield return Plugin.Instance.StartCoroutine(SnapshotLoadedPortals(missingOnly: true, max: 2));
 
-                List<ZDO> allZdos = GetAllPortals();
-                int updated = 0;
-                
-                foreach (var zdo in allZdos)
+                int interval = Configuration.snapshotRefreshIntervalMinutes.Value;
+                if (interval > 0 && Time.realtimeSinceStartup >= nextRefresh)
                 {
-                    ZNetView nview = ZNetScene.instance.FindInstance(zdo);
-                    if (nview != null)
-                    {
-                        TeleportWorld tw = nview.GetComponent<TeleportWorld>();
-                        if (tw != null)
-                        {
-                            Plugin.Instance.StartCoroutine(TakeSnapshotRoutine(tw.transform));
-                            updated++;
-                            if (updated >= 3) break;
-                        }
-                    }
+                    nextRefresh = Time.realtimeSinceStartup + interval * 60f;
+                    yield return Plugin.Instance.StartCoroutine(SnapshotLoadedPortals(missingOnly: false, max: 3));
                 }
             }
+            // ReSharper disable once IteratorNeverReturns
+        }
+
+        private static IEnumerator SnapshotLoadedPortals(bool missingOnly, int max)
+        {
+            foreach (TeleportWorld portal in CollectLoadedPortals(missingOnly, max))
+            {
+                if (portal == null) continue;
+                yield return TakeSnapshotRoutine(portal.transform);
+            }
+        }
+
+        // Only portals whose instance is spawned around this player can be photographed, and on a client
+        // GetAllPortals returns exactly those - a client's ZDOMan holds nothing further away.
+        private static List<TeleportWorld> CollectLoadedPortals(bool missingOnly, int max)
+        {
+            List<TeleportWorld> found = new List<TeleportWorld>();
+            try
+            {
+                foreach (ZDO zdo in GetAllPortals())
+                {
+                    if (found.Count >= max) break;
+                    if (zdo == null || !zdo.IsValid()) continue;
+
+                    if (missingOnly)
+                    {
+                        byte[] existing = zdo.GetByteArray("PortalSnapshot");
+                        if (existing != null && existing.Length > 0) continue;
+                    }
+
+                    ZNetView nview = ZNetScene.instance.FindInstance(zdo);
+                    if (nview == null || !nview.IsValid()) continue;
+
+                    TeleportWorld tw = nview.GetComponent<TeleportWorld>();
+                    if (tw != null) found.Add(tw);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: scanning for portals to photograph failed (non-fatal). Reason: {ex}");
+            }
+            return found;
         }
 
         // Extracted from TakeSnapshotRoutine: C# forbids "yield return" inside a try block that has
@@ -256,10 +327,14 @@ namespace TortalPortal
 
                 byte[] jpgBytes = tex.EncodeToJPG(75); // Higher quality JPG
 
-                // Store in closest ZDO (the one just placed)
+                // Store in closest ZDO (the one just placed). Ownership has to be claimed first: a portal
+                // somebody else raised is owned by them or by the server, and a write to a ZDO this peer
+                // does not own is discarded at the next sync - which is most portals when backfilling a
+                // world that already existed.
                 var nview = portalTransform.GetComponent<ZNetView>();
                 if (nview && nview.IsValid())
                 {
+                    if (!nview.IsOwner()) nview.ClaimOwnership();
                     nview.GetZDO().Set("PortalSnapshot", jpgBytes);
                 }
             }

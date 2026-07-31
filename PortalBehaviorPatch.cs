@@ -90,14 +90,34 @@ namespace TortalPortal
                 var nview = __instance.GetComponent<ZNetView>();
                 if (nview == null || !nview.IsValid() || __instance.m_proximityRoot == null) return true;
 
-                Player closestPlayer = Player.GetClosestPlayer(__instance.m_proximityRoot.position, __instance.m_activationRange);
+                Vector3 gate = __instance.m_proximityRoot.position;
+
+                // Kept on the portal's own activation range: this drives the glow and the connection
+                // effect, which should read the same for everyone regardless of anyone's menu preference.
+                Player closestPlayer = Player.GetClosestPlayer(gate, __instance.m_activationRange);
                 bool anyPlayerInRange = closestPlayer != null && !closestPlayer.IsTeleporting();
-                bool localPlayerInRange = anyPlayerInRange && closestPlayer == Player.m_localPlayer;
+
+                // Measured against the local player directly rather than taken from GetClosestPlayer.
+                // Standing at a portal with a friend a step nearer than you made that call return them, so
+                // the window never opened for you at all.
+                Player local = Player.m_localPlayer;
+                bool localPlayerInRange = false;
+                if (local != null && !local.IsTeleporting())
+                {
+                    float openRange = Mathf.Min(Configuration.menuOpenDistance.Value, __instance.m_activationRange);
+                    // A little further out to close than to open, so hovering on the boundary does not
+                    // strobe the window.
+                    float range = PortalUIManager.IsUIVisible() && PortalUIManager.CurrentSourcePortal == __instance
+                        ? openRange + 1f
+                        : openRange;
+
+                    localPlayerInRange = Vector3.Distance(local.transform.position, gate) <= range;
+                }
 
                 bool canTeleport = false;
                 if (localPlayerInRange)
                 {
-                    canTeleport = closestPlayer.IsTeleportable() || __instance.m_allowAllItems || Configuration.IsAdmin() || Configuration.filterMode.Value == FilterMode.BypassAll;
+                    canTeleport = local.IsTeleportable() || __instance.m_allowAllItems || Configuration.IsAdmin() || Configuration.filterMode.Value == FilterMode.BypassAll;
                     if (!canTeleport) Configuration.LogDebug("Local player is in range but cannot teleport (likely carrying restricted items).");
                 }
 

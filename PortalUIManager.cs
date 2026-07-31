@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using System;
 using System.Reflection;
@@ -17,22 +18,33 @@ namespace TortalPortal
         // Everything the destination list needs to draw a row, resolved once when the window opens. Biome in
         // particular has to be precomputed: WorldGenerator.GetBiome samples world noise, and OnGUI runs at
         // least twice a frame for every row on screen.
+        //
+        // The row is built entirely from the server's index - no ZDO. A client does not hold the ZDO of a
+        // portal on the far side of the map, so the snapshot and the PIN are fetched separately when the row
+        // is actually selected.
         private sealed class PortalEntry
         {
-            public ZDO Zdo;
+            public ZDOID Id;
             public string Tag;
             public string Pin;
             public string Creator;
             public Vector3 Pos;
+            public Quaternion Rot;
             public Heightmap.Biome Biome;
             public float Distance;
             public string Label;
             public string SearchKey;
             public bool Locked;
+            public DetailState Details;
+            public Minimap.PinData MapPin;
         }
 
+        private enum DetailState { Pending, Resolved, Unavailable }
+
         private readonly List<PortalEntry> _entries = new List<PortalEntry>();
+        private readonly List<Minimap.PinData> _pins = new List<Minimap.PinData>();
         private PortalEntry _selected;
+        private Coroutine _detailFetch;
 
         private string _searchFilter = "";
         private Vector2 _scrollPos;
@@ -44,6 +56,36 @@ namespace TortalPortal
         private string _configName = "";
         private string _configPin = "";
         private bool _configHasPin;
+
+        // IMGUI control names, so we can tell whether the player is typing into one of our fields rather
+        // than steering their character. See InputFocusPatch.
+        private const string SearchFieldName = "TortalPortal.Search";
+        private const string PinFieldName = "TortalPortal.Pin";
+        private const string ConfigNameFieldName = "TortalPortal.ConfigName";
+        private const string ConfigPinFieldName = "TortalPortal.ConfigPin";
+
+        private static bool _fieldFocused;
+
+        // Set by HideUI, acted on in OnGUI: dropping IMGUI focus has to happen inside OnGUI, and HideUI is
+        // called from the portal update tick.
+        private bool _releaseFocus;
+
+        // Focus the search box as the window opens, so you can start typing a portal's name the moment it
+        // appears instead of hunting for the field with the mouse.
+        private bool _focusSearchPending;
+
+        // "The mod has the keyboard." True while one of our fields is focused, and unconditionally while the
+        // configuration window is up - that one is a modal opened deliberately with E, so nothing else should
+        // be listening. The destination window is deliberately NOT included: it opens over the large map and
+        // the player still needs the map's own pan and zoom keys while choosing where to go.
+        public static bool IsTextInputActive()
+        {
+            if (_fieldFocused) return true;
+            return _instance != null && _instance._isVisible && _instance._isConfigMode;
+        }
+
+        // "The mod needs the mouse." Either window, both modes - see InputFocusPatch.
+        public static bool WantsCursor() => _instance != null && _instance._isVisible;
 
         public static void Init()
         {
@@ -65,6 +107,8 @@ namespace TortalPortal
             CurrentSourcePortal = sourcePortal;
             _instance._isConfigMode = false;
             _instance._isVisible = true;
+            _instance._searchFilter = "";
+            _instance._focusSearchPending = true;
             _instance.BuildEntries();
             Configuration.LogDebug($"Found {_instance._entries.Count} destination portals.");
 
@@ -73,6 +117,8 @@ namespace TortalPortal
                 Configuration.LogDebug("Opening Large Minimap.");
                 Minimap.instance.SetMapMode(Minimap.MapMode.Large);
             }
+
+            _instance.AddMapPins();
         }
 
         public static void ShowConfigUI(TeleportWorld targetPortal)
@@ -80,11 +126,31 @@ namespace TortalPortal
             Configuration.LogDebug("PortalUIManager.ShowConfigUI called.");
             if (_instance == null) Init();
 
+            ZNetView nview = targetPortal != null ? targetPortal.GetComponent<ZNetView>() : null;
+            if (nview == null || !nview.IsValid())
+            {
+                Configuration.LogDebug("ShowConfigUI called for a portal with no valid ZNetView. Ignoring.");
+                return;
+            }
+
+            // Reachable from the destination window's "Name & PIN" button as well as from Interact, so the
+            // select-mode state has to be torn down here rather than assumed absent. The map pins matter
+            // most: they are added to the shared Minimap pin list, so leaving them behind would strand them
+            // on the small minimap for as long as the configuration window is up.
+            _instance.StopDetailFetch();
+            _instance.ClearMapPins();
+            _instance.ClearPreview();
+            _instance._selected = null;
+            _instance._previewExpanded = false;
+            _instance._showPinPrompt = false;
+            _instance._pinInput = "";
+            _instance._focusSearchPending = false;
+
             CurrentSourcePortal = targetPortal;
             _instance._isConfigMode = true;
             _instance._isVisible = true;
 
-            ZDO zdo = targetPortal.GetComponent<ZNetView>().GetZDO();
+            ZDO zdo = nview.GetZDO();
             _instance._configName = zdo.GetString(ZDOVars.s_tag);
             _instance._configPin = zdo.GetString("PortalPIN");
             _instance._configHasPin = !string.IsNullOrEmpty(_instance._configPin);
@@ -103,7 +169,15 @@ namespace TortalPortal
                 _instance._showPinPrompt = false;
                 _instance._pinInput = "";
                 _instance._previewExpanded = false;
+                _instance._focusSearchPending = false;
+                _instance.StopDetailFetch();
+                _instance.ClearMapPins();
                 _instance.ClearPreview();
+
+                // Hand the keyboard straight back rather than waiting for the next OnGUI, so the player is
+                // never left standing still for a frame after the window closes.
+                _fieldFocused = false;
+                _instance._releaseFocus = true;
             }
 
             CurrentSourcePortal = null;
@@ -123,6 +197,7 @@ namespace TortalPortal
             _showPinPrompt = false;
             _pinInput = "";
             _previewExpanded = false;
+            StopDetailFetch();
             ClearPreview();
 
             ZDOID sourceId = ZDOID.None;
@@ -134,28 +209,27 @@ namespace TortalPortal
 
             Vector3 origin = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
 
-            foreach (ZDO zdo in PlacementPatch.GetAllPortals())
+            foreach (PortalRegistry.Entry src in PortalRegistry.GetEntries())
             {
-                if (zdo == null || zdo.m_uid == sourceId) continue;
+                if (src.Id == sourceId) continue;
 
-                string tag = Sanitise(zdo.GetString(ZDOVars.s_tag));
+                string tag = Sanitise(src.Tag);
                 if (string.IsNullOrEmpty(tag)) tag = "Unnamed portal";
-                string creator = Sanitise(zdo.GetString(ZDOVars.s_creatorName));
+                string creator = Sanitise(src.Creator);
                 if (string.IsNullOrEmpty(creator)) creator = "Unknown";
 
-                Vector3 pos = zdo.GetPosition();
-                string pin = zdo.GetString("PortalPIN");
+                Vector3 pos = src.Pos;
 
                 PortalEntry e = new PortalEntry
                 {
-                    Zdo = zdo,
+                    Id = src.Id,
                     Tag = tag,
-                    Pin = pin,
                     Creator = creator,
                     Pos = pos,
+                    Rot = src.Rot,
                     Biome = WorldGenerator.instance != null ? WorldGenerator.instance.GetBiome(pos) : Heightmap.Biome.None,
                     Distance = Vector3.Distance(origin, pos),
-                    Locked = !string.IsNullOrEmpty(pin)
+                    Locked = src.Locked
                 };
 
                 e.SearchKey = tag.ToLowerInvariant();
@@ -193,8 +267,25 @@ namespace TortalPortal
 
         private void OnGUI()
         {
+            if (_releaseFocus)
+            {
+                _releaseFocus = false;
+                _fieldFocused = false;
+                GUI.FocusControl(null);
+                GUIUtility.keyboardControl = 0;
+            }
+
             if (!_isVisible) return;
             TortalUITheme.EnsureBuilt();
+
+            // Escape backs out of a field without closing the window, so there is always a way to hand the
+            // keyboard back that is not "click somewhere harmless".
+            if (_fieldFocused && Event.current != null &&
+                Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
+            {
+                _releaseFocus = true;
+                Event.current.Use();
+            }
 
             // Auto-close if the map is closed, but only while picking a destination - the config window is
             // opened from Interact and has nothing to do with the map.
@@ -207,16 +298,31 @@ namespace TortalPortal
             if (_isConfigMode) DrawConfigUI();
             else if (_previewExpanded && _previewTex != null && _selected != null) DrawExpandedPreview();
             else DrawSelectUI();
+
+            // The destination window's search box IS auto-focused on open, which means this mod holds the
+            // keyboard from the moment you walk up to a portal - and therefore that Valheim's own Use key is
+            // suppressed for as long as it does. Anything that used to be reached by pressing E at an open
+            // window needs its own on-screen control instead; see the "Name & PIN" button in DrawSelectUI.
+            string focused = GUI.GetNameOfFocusedControl();
+            _fieldFocused = focused == SearchFieldName || focused == PinFieldName ||
+                            focused == ConfigNameFieldName || focused == ConfigPinFieldName;
         }
 
-        private void DrawSelectUI()
+        // Shared so the map-centring maths knows exactly how much of the screen the window is covering,
+        // rather than guessing at it.
+        private static Rect SelectWindowRect()
         {
             // Grows with the text scale, but never off the screen.
             float w = Mathf.Min(Screen.width - 120f, TortalUITheme.S(860f));
             float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(660f));
             // Pinned left so the large map, which we opened, stays readable on the right.
             float x = Mathf.Max(20f, Mathf.Min(52f, Screen.width - w - 20f));
-            Rect win = new Rect(x, Mathf.Round((Screen.height - h) * 0.5f), w, h);
+            return new Rect(x, Mathf.Round((Screen.height - h) * 0.5f), w, h);
+        }
+
+        private void DrawSelectUI()
+        {
+            Rect win = SelectWindowRect();
 
             TortalUITheme.DrawWindow(win, "Total Portal Control");
 
@@ -231,11 +337,37 @@ namespace TortalPortal
             float labelW = TortalUITheme.S(54f);
             Rect search = new Rect(left.x, left.y, left.width, rowH);
             GUI.Label(new Rect(search.x, search.y, labelW, search.height), "Search", TortalUITheme.Header);
+            GUI.SetNextControlName(SearchFieldName);
             _searchFilter = GUI.TextField(new Rect(search.x + labelW + 4f, search.y, search.width - labelW - 4f, search.height),
                                           _searchFilter, 32, TortalUITheme.Field);
 
+            // Has to happen after the control exists, so it cannot be done in ShowUI.
+            if (_focusSearchPending)
+            {
+                _focusSearchPending = false;
+                GUI.FocusControl(SearchFieldName);
+            }
+
             float closeW = TortalUITheme.S(92f);
-            if (GUI.Button(new Rect(right.xMax - closeW, search.y, closeW, rowH), "Close", TortalUITheme.Button))
+            Rect closeRect = new Rect(right.xMax - closeW, search.y, closeW, rowH);
+
+            // The way in to this portal's own name and PIN, and the ONLY reliable one while this window is
+            // up. Pressing E again cannot work here: the search field above takes the keyboard the moment the
+            // window opens, InputFocusPatch reports that to Chat.HasFocus, and Valheim gates its Use key
+            // behind Player.TakeInput() - so the keypress never reaches TeleportWorld.Interact at all. That
+            // is what made the configuration window look like it needed several tries to open; whether it
+            // worked came down to whether the field happened to hold focus at that moment.
+            if (SecurityPatch.CanConfigure(CurrentSourcePortal))
+            {
+                float editW = TortalUITheme.S(128f);
+                if (GUI.Button(new Rect(closeRect.x - editW - 8f, search.y, editW, rowH), "Name & PIN", TortalUITheme.Button))
+                {
+                    ShowConfigUI(CurrentSourcePortal);
+                    return;
+                }
+            }
+
+            if (GUI.Button(closeRect, "Close", TortalUITheme.Button))
             {
                 HideUI();
                 return;
@@ -249,7 +381,7 @@ namespace TortalPortal
             DrawDetails(detail);
 
             GUI.Label(TortalUITheme.FooterLine(win),
-                      "Pick a destination to preview it  ·  the map marks the selection  ·  close the map to cancel",
+                      "Type to filter  ·  every portal is marked on the map, the selected one twice the size  ·  Esc frees the keyboard  ·  close the map to cancel",
                       TortalUITheme.Footer);
         }
 
@@ -278,7 +410,9 @@ namespace TortalPortal
             if (shown == 0)
             {
                 GUILayout.Space(24f);
-                GUILayout.Label(_entries.Count == 0 ? "No other portals discovered yet." : "Nothing matches that search.",
+                GUILayout.Label(_entries.Count > 0 ? "Nothing matches that search."
+                                : PortalRegistry.GetEntries().Count > 0 ? "This is the only portal in the world."
+                                : "Waiting for the server's portal list...",
                                 TortalUITheme.Note);
             }
 
@@ -292,9 +426,186 @@ namespace TortalPortal
             _showPinPrompt = e.Locked && !Configuration.IsAdmin();
             _pinInput = "";
             _previewExpanded = false;
-            LoadPreview(e.Zdo);
+            ClearPreview();
 
-            if (Minimap.instance != null) Minimap.instance.ShowPointOnMap(e.Pos);
+            StopDetailFetch();
+            e.Details = DetailState.Pending;
+            _detailFetch = StartCoroutine(ResolveDetails(e));
+
+            HighlightPin(e);
+            ShowPointClearOfWindow(e.Pos);
+        }
+
+        // ---- map ---------------------------------------------------------------------------------------
+
+        // Centring the map on the chosen portal put it squarely behind this window, which is pinned to the
+        // left half of the screen. Shifting the centre west by half the window's width lands the selection
+        // in the middle of the strip of map the player can actually see.
+        //
+        // Computed from the map's own zoom and image aspect rather than a fudge factor, so it stays correct
+        // at any resolution, UI scale or zoom level.
+        private static void ShowPointClearOfWindow(Vector3 point)
+        {
+            Minimap map = Minimap.instance;
+            if (map == null) return;
+
+            float shift = 0f;
+            try
+            {
+                RectTransform image = map.m_mapImageLarge != null ? map.m_mapImageLarge.transform as RectTransform : null;
+                if (image != null && Screen.width > 0 && image.rect.height > 0f)
+                {
+                    // How much world the large map spans from screen edge to screen edge.
+                    float aspect = image.rect.width / image.rect.height;
+                    float worldWidth = map.m_largeZoom * aspect * map.m_textureSize * map.m_pixelSize;
+
+                    shift = (FreeCentreFraction() - 0.5f) * worldWidth;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Falling through with shift 0 just centres it the old way - worth having the map at all.
+                shift = 0f;
+                Plugin.Log.LogError($"TortalPortal: could not offset the map for the window (non-fatal). Reason: {ex}");
+            }
+
+            map.ShowPointOnMap(new Vector3(point.x - shift, point.y, point.z));
+        }
+
+        // Middle of whatever the destination window is NOT covering, as a 0-1 fraction of the screen width.
+        // The map centres on it and the centre message moves to it, so "the part you can actually see" is one
+        // number in one place rather than two that can drift apart.
+        private static float FreeCentreFraction()
+        {
+            if (Screen.width <= 0) return 0.5f;
+            return Mathf.Clamp01((SelectWindowRect().xMax / Screen.width + 1f) * 0.5f);
+        }
+
+        // How far, in screen pixels, Valheim's centre message has to move to clear the destination window.
+        // Zero when there is nothing to clear, which is the signal to put it back where vanilla had it.
+        //
+        // Deliberately only the destination window. The configuration window is centred and narrow, and the
+        // one message it raises fires as it closes, so there is nothing to dodge.
+        public static float CentreMessageOffset()
+        {
+            if (_instance == null || !_instance._isVisible || _instance._isConfigMode) return 0f;
+            if (Screen.width <= 0) return 0f;
+            return (FreeCentreFraction() - 0.5f) * Screen.width;
+        }
+
+        // Vanilla marks nothing on the map for a portal, so a list of names was the only clue where any of
+        // them actually were. These are transient - never saved, and removed the moment the window closes -
+        // so they cannot silt up somebody's pin list.
+        private void AddMapPins()
+        {
+            ClearMapPins();
+            if (!Configuration.showPortalPinsOnMap.Value || Minimap.instance == null) return;
+
+            try
+            {
+                Minimap.PinType icon = (Minimap.PinType)(int)Configuration.portalPinIcon.Value;
+                foreach (PortalEntry e in _entries)
+                {
+                    e.MapPin = Minimap.instance.AddPin(e.Pos, icon, e.Tag, false, false);
+                    if (e.MapPin != null) _pins.Add(e.MapPin);
+                }
+
+                Configuration.LogDebug($"Marked {_pins.Count} portals on the map.");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: could not mark portals on the map (non-fatal). Reason: {ex}");
+            }
+        }
+
+        private void ClearMapPins()
+        {
+            if (_pins.Count == 0) return;
+
+            try
+            {
+                if (Minimap.instance != null)
+                {
+                    foreach (Minimap.PinData pin in _pins) Minimap.instance.RemovePin(pin);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: could not clear the portal map markers (non-fatal). Reason: {ex}");
+            }
+
+            _pins.Clear();
+            foreach (PortalEntry e in _entries) e.MapPin = null;
+        }
+
+        // The chosen destination is drawn at double size, so the row you clicked and the mark on the map
+        // read as the same thing.
+        private void HighlightPin(PortalEntry selected)
+        {
+            foreach (PortalEntry e in _entries)
+            {
+                if (e.MapPin != null) e.MapPin.m_doubleSize = e == selected;
+            }
+        }
+
+        private void StopDetailFetch()
+        {
+            if (_detailFetch == null) return;
+            StopCoroutine(_detailFetch);
+            _detailFetch = null;
+        }
+
+        // The row only needs the index. The snapshot (tens of kilobytes) and the PIN live on the portal's own
+        // ZDO, and a client will not be holding the ZDO of a gate on the far side of the map - so ask the
+        // server for that one object and fill the panel in when it lands. On a host, or for a portal already
+        // in range, it is there on the first look and this finishes in a frame.
+        private IEnumerator ResolveDetails(PortalEntry e)
+        {
+            ZDO zdo = ZDOMan.instance != null ? ZDOMan.instance.GetZDO(e.Id) : null;
+
+            if (zdo == null && ZDOMan.instance != null)
+            {
+                Configuration.LogDebug($"Requesting ZDO {e.Id} from the server for portal details.");
+                ZDOMan.instance.RequestZDO(e.Id);
+
+                float deadline = Time.realtimeSinceStartup + 6f;
+                while (zdo == null && Time.realtimeSinceStartup < deadline)
+                {
+                    yield return new WaitForSeconds(0.1f);
+                    zdo = ZDOMan.instance.GetZDO(e.Id);
+                }
+            }
+
+            _detailFetch = null;
+            if (_selected != e) yield break; // player moved on while we waited
+
+            if (zdo == null)
+            {
+                e.Details = DetailState.Unavailable;
+                Configuration.LogDebug($"ZDO {e.Id} never arrived; portal details unavailable.");
+                yield break;
+            }
+
+            ApplyDetails(e, zdo);
+        }
+
+        // Extracted so the risky part can sit in a try/catch - C# forbids "yield return" inside a try block
+        // with a catch clause.
+        private void ApplyDetails(PortalEntry e, ZDO zdo)
+        {
+            try
+            {
+                e.Pin = zdo.GetString("PortalPIN");
+                e.Locked = !string.IsNullOrEmpty(e.Pin);
+                e.Details = DetailState.Resolved;
+                _showPinPrompt = e.Locked && !Configuration.IsAdmin();
+                LoadPreview(zdo);
+            }
+            catch (Exception ex)
+            {
+                e.Details = DetailState.Unavailable;
+                Plugin.Log.LogError($"TortalPortal: reading portal details failed (non-fatal, travel still works). Reason: {ex}");
+            }
         }
 
         private void DrawDetails(Rect area)
@@ -319,7 +630,11 @@ namespace TortalPortal
             }
             else
             {
-                GUI.Label(preview, "No snapshot captured yet.", TortalUITheme.Note);
+                GUI.Label(preview,
+                          e.Details == DetailState.Pending ? "Reading portal..." :
+                          e.Details == DetailState.Unavailable ? "Could not reach that portal." :
+                          "No snapshot captured yet.",
+                          TortalUITheme.Note);
             }
             TortalUITheme.DrawOutline(preview, new Color(TortalUITheme.Gold.r, TortalUITheme.Gold.g, TortalUITheme.Gold.b, 0.8f), 1f);
 
@@ -361,18 +676,26 @@ namespace TortalPortal
                 float pinLabelW = TortalUITheme.S(40f);
                 Rect pinRow = new Rect(area.x, action.y - pinH - 8f, area.width, pinH);
                 GUI.Label(new Rect(pinRow.x, pinRow.y, pinLabelW, pinRow.height), "PIN", TortalUITheme.Header);
+                GUI.SetNextControlName(PinFieldName);
                 _pinInput = GUI.PasswordField(new Rect(pinRow.x + pinLabelW + 4f, pinRow.y, pinRow.width - pinLabelW - 4f, pinRow.height),
                                               _pinInput, '*', 10, TortalUITheme.Field);
 
                 if (GUI.Button(action, "Unlock & Teleport", TortalUITheme.Primary))
                 {
-                    if (_pinInput == e.Pin) ExecuteTeleport(e.Zdo);
+                    // The PIN rides on the portal's own ZDO, which for a distant gate has to come from the
+                    // server first. Selecting the row asked for it; this only fires early.
+                    if (e.Details != DetailState.Resolved)
+                    {
+                        Player.m_localPlayer.Message(MessageHud.MessageType.Center,
+                            e.Details == DetailState.Pending ? "Still reading that portal..." : "That portal could not be reached.");
+                    }
+                    else if (_pinInput == e.Pin) ExecuteTeleport(e);
                     else Player.m_localPlayer.Message(MessageHud.MessageType.Center, "Incorrect PIN!");
                 }
             }
             else if (GUI.Button(action, "Teleport", TortalUITheme.Primary))
             {
-                ExecuteTeleport(e.Zdo);
+                ExecuteTeleport(e);
             }
         }
 
@@ -446,6 +769,7 @@ namespace TortalPortal
 
             GUI.Label(new Rect(body.x, y, body.width, lineH), "Portal name", TortalUITheme.Header);
             y += lineH + 4f;
+            GUI.SetNextControlName(ConfigNameFieldName);
             _configName = GUI.TextField(new Rect(body.x, y, body.width, fieldH), _configName, 20, TortalUITheme.Field);
             y += fieldH + 16f;
 
@@ -460,6 +784,7 @@ namespace TortalPortal
             {
                 GUI.Label(new Rect(body.x, y, body.width, lineH), "PIN", TortalUITheme.Header);
                 y += lineH + 4f;
+                GUI.SetNextControlName(ConfigPinFieldName);
                 _configPin = GUI.TextField(new Rect(body.x, y, fieldW, fieldH), _configPin, 10, TortalUITheme.Field);
             }
 
@@ -526,25 +851,26 @@ namespace TortalPortal
 
         // ---- teleport --------------------------------------------------------------------------------------
 
-        private void ExecuteTeleport(ZDO targetZdo)
+        // Position and rotation both come off the index, so a destination can be travelled to without the
+        // client ever holding its ZDO.
+        private void ExecuteTeleport(PortalEntry target)
         {
-            Configuration.LogDebug($"ExecuteTeleport called for ZDO {targetZdo.m_uid}");
+            Configuration.LogDebug($"ExecuteTeleport called for ZDO {target.Id}");
             if (CurrentSourcePortal == null)
             {
                 Configuration.LogDebug("CurrentSourcePortal is null! Cannot teleport.");
                 return;
             }
 
-            Vector3 position = targetZdo.GetPosition();
-            Quaternion rotation = targetZdo.GetRotation();
-            Vector3 pos = position + rotation * Vector3.forward * CurrentSourcePortal.m_exitDistance + Vector3.up;
+            Quaternion rotation = target.Rot;
+            Vector3 pos = target.Pos + rotation * Vector3.forward * CurrentSourcePortal.m_exitDistance + Vector3.up;
 
             Configuration.LogDebug($"Teleporting player to {pos}.");
 
             // Tell the behaviour patch to sit on the destination's auto-open before we move. The player lands
             // well inside that portal's activation range, so without this it would greet them with the menu
             // again the instant the trip finished - which looked like the menu had never closed.
-            PortalBehaviorPatch.SuppressAutoOpenFor(targetZdo.m_uid);
+            PortalBehaviorPatch.SuppressAutoOpenFor(target.Id);
             HideUI();
 
             Player.m_localPlayer.TeleportTo(pos, rotation, true);
