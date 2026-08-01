@@ -14,6 +14,7 @@ namespace TortalPortal
     public static class TortalPinIcon
     {
         private static Sprite _rune;
+        private static Color _runeColour;
         private static Sprite _custom;
         private static bool _customTried;
 
@@ -31,9 +32,20 @@ namespace TortalPortal
 
         private static Sprite GetRune()
         {
-            if (_rune != null) return _rune;
+            Color wanted = Configuration.pinColour != null ? Configuration.pinColour.Value : new Color(0.30f, 1.00f, 0.55f, 1f);
 
-            Texture2D tex = BuildRunePin(new Color(0.30f, 1.00f, 0.55f, 1f));
+            // Rebuilt when the colour dial moves, cached the rest of the time. The old sprite and its texture
+            // are destroyed rather than dropped - both are HideAndDontSave and would live forever otherwise.
+            if (_rune != null && wanted == _runeColour) return _rune;
+            if (_rune != null)
+            {
+                Texture2D old = _rune.texture;
+                UnityEngine.Object.Destroy(_rune);
+                if (old != null) UnityEngine.Object.Destroy(old);
+            }
+
+            _runeColour = wanted;
+            Texture2D tex = BuildRunePin(new Color(wanted.r, wanted.g, wanted.b, 1f));
             _rune = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f));
             return _rune;
         }

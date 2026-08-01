@@ -37,11 +37,20 @@ namespace TortalPortal
 
         private ParticleSystem _veil;
         private ParticleSystem _motes;
-        private ParticleSystem _orbit;
         private LineRenderer _ringA, _ringB, _sigil, _sigilInner;
         private LineRenderer[] _spokes;
         private ParticleSystem _sigilRunes;
         private float _spin;
+
+        // The swirling rune trail that replaces vanilla's target-found flare: an invisible head orbits the
+        // structure and drops stationary particles behind it - runes sparsely, soft glow densely - so the
+        // trail is a drawn ribbon of the head's actual path, Wings of the Valkyrie style. Manual Emit only;
+        // both systems have their emission modules off.
+        private ParticleSystem _swirlRunes;
+        private ParticleSystem _swirlGlow;
+        private float _swirlAngle;
+        private Vector3 _lastRuneDrop, _lastGlowDrop;
+        private bool _swirlPrimed;
 
         // 0 = dormant, 1 = fully awake. Chased toward "is any player near" every frame; everything visible
         // is scaled by it, so approach is a fade-in rather than a pop.
@@ -65,6 +74,14 @@ namespace TortalPortal
 
         private void Start()
         {
+            // The colour dial. Read once per portal build - the material cache is keyed on it, so a live
+            // change applies to portals as they load rather than re-skinning the loaded world mid-frame.
+            if (Configuration.vfxColour != null)
+            {
+                Color c = Configuration.vfxColour.Value;
+                Colour = new Color(c.r, c.g, c.b, 1f);
+            }
+
             if (_atlasTex == null) _atlasTex = TortalRuneTexture.GenerateRuneAtlas(Color.white);
             if (_softTex == null) _softTex = TortalRuneTexture.GenerateSoftTrail(Color.white);
             Texture2D atlas = _atlasTex;
@@ -85,7 +102,7 @@ namespace TortalPortal
             BuildRings(glowMat);
             BuildSigil(glowMat, runeMat);
             BuildMotes(runeMat);
-            BuildOrbit(runeMat);
+            BuildSwirl(runeMat, glowMat);
 
             // Born dormant, like vanilla: a portal loading in at the edge of view distance should not be
             // running its light show for nobody. The first Update wakes it if someone is already close.
@@ -258,52 +275,70 @@ namespace TortalPortal
             rr.receiveShadows = false;
         }
 
-        // ---- 5. Runes circling the whole portal, the way vanilla's swirl did ----------------------------
-        private void BuildOrbit(Material mat)
+        // ---- 5. The swirling rune trail circling the whole portal --------------------------------------
+        //
+        // Wings of the Valkyrie's wingtip-trail technique, bent into a circle: the built-in emission module
+        // stays OFF on both systems, and Update walks an invisible head around the structure, calling
+        // Emit(1) at the head's position every time it has moved far enough. startSpeed is 0, so each
+        // particle stays where it was dropped - the "swirl" on screen is the literal path of the head,
+        // glyphs strung sparsely along a dense soft-glow ribbon, and it cannot gap at low framerate or
+        // clump when the head slows.
+        private void BuildSwirl(Material runeMat, Material glowMat)
         {
-            GameObject go = Child("OrbitRunes", new Vector3(0f, Mathf.Max(0.6f, _orbHeight * 0.55f), 0f));
-            _orbit = go.AddComponent<ParticleSystem>();
+            _swirlRunes = BuildTrailSystem("SwirlRunes", runeMat, 0.26f, 0.44f, 1.5f, 2.3f, 90, true);
+            _swirlGlow = BuildTrailSystem("SwirlGlow", glowMat, 0.10f, 0.18f, 0.7f, 1.1f, 200, false);
+        }
 
-            ParticleSystem.MainModule main = _orbit.main;
+        private ParticleSystem BuildTrailSystem(string name, Material mat, float sizeMin, float sizeMax,
+                                                float lifeMin, float lifeMax, int maxParticles, bool runes)
+        {
+            GameObject go = Child(name, Vector3.zero);
+            ParticleSystem ps = go.AddComponent<ParticleSystem>();
+
+            ParticleSystem.MainModule main = ps.main;
             main.loop = true;
             main.playOnAwake = true;
-            main.startSpeed = 0f;
-            main.startLifetime = new ParticleSystem.MinMaxCurve(3.5f, 6f);
-            main.startSize = new ParticleSystem.MinMaxCurve(0.2f, 0.38f);
+            main.startSpeed = 0f; // dropped, not launched - the trail is the head's path
+            main.startLifetime = new ParticleSystem.MinMaxCurve(lifeMin, lifeMax);
+            main.startSize = new ParticleSystem.MinMaxCurve(sizeMin, sizeMax);
             main.startColor = Colour;
-            main.maxParticles = 120;
-            // Local, like the veil: the orbit belongs to the structure, not to the air around it.
+            main.maxParticles = maxParticles;
+            // Local, so the ribbon belongs to the structure and survives the portal being moved.
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            if (runes) main.startRotation = new ParticleSystem.MinMaxCurve(0f, Mathf.PI * 2f);
 
-            ParticleSystem.EmissionModule em = _orbit.emission;
-            em.rateOverTime = 12f;
+            ParticleSystem.EmissionModule em = ps.emission;
+            em.enabled = false; // manual Emit only
 
-            // A flat ring just outside the pillars, so the runes pass AROUND the stone rather than through it.
-            ParticleSystem.ShapeModule sh = _orbit.shape;
-            sh.enabled = true;
-            sh.shapeType = ParticleSystemShapeType.Circle;
-            sh.radius = GateWidth * 1.05f;
-            sh.radiusThickness = 0.1f;
-            sh.rotation = new Vector3(90f, 0f, 0f);
-
-            // The orbit itself. Same lesson as the veil, one module over: every curve in the module must be
-            // in the same MinMaxCurve mode or Unity throws the whole module away - so all three orbital axes
-            // are two-constant ranges even though only Y actually turns.
-            ParticleSystem.VelocityOverLifetimeModule vel = _orbit.velocityOverLifetime;
-            vel.enabled = true;
-            vel.space = ParticleSystemSimulationSpace.Local;
-            vel.orbitalX = new ParticleSystem.MinMaxCurve(0f, 0f);
-            vel.orbitalY = new ParticleSystem.MinMaxCurve(0.45f, 0.75f);
-            vel.orbitalZ = new ParticleSystem.MinMaxCurve(0f, 0f);
-
-            FadeInOut(_orbit);
-            Atlas(_orbit);
+            FadeInOut(ps);
+            if (runes) Atlas(ps);
 
             ParticleSystemRenderer r = go.GetComponent<ParticleSystemRenderer>();
             r.renderMode = ParticleSystemRenderMode.Billboard;
             r.material = mat;
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             r.receiveShadows = false;
+            return ps;
+        }
+
+        // Where the head is right now, in local space: a circle just outside the pillars with a slow
+        // vertical wander, so the ribbon weaves around the stone rather than drawing a flat hoop.
+        private Vector3 SwirlHead()
+        {
+            float radius = GateWidth * 1.05f;
+            float y = Mathf.Max(0.35f, _orbHeight * 0.55f + Mathf.Sin(_swirlAngle * 0.6f) * (_orbHeight * 0.45f));
+            return new Vector3(Mathf.Cos(_swirlAngle) * radius, y, Mathf.Sin(_swirlAngle) * radius);
+        }
+
+        private static void EmitAt(ParticleSystem ps, Vector3 localPos)
+        {
+            if (ps == null) return;
+            ParticleSystem.EmitParams ep = new ParticleSystem.EmitParams
+            {
+                position = localPos,          // interpreted in the system's own (Local) simulation space
+                applyShapeToPosition = false
+            };
+            ps.Emit(ep, 1);
         }
 
         // ---- 4. Slow embers rising out of the sigil -----------------------------------------------------
@@ -368,8 +403,35 @@ namespace TortalPortal
             // even if the trigger stops reporting (leaving the volume, dying, being teleported away).
             Charge = Mathf.Max(0f, Charge - Time.deltaTime * 1.4f);
 
+            // The intensity dial: density and brightness scale linearly with it, stroke widths by its root
+            // so a triple-strength gate roars without its linework turning to rope.
+            float k = Configuration.vfxIntensity != null ? Configuration.vfxIntensity.Value : 1f;
+
             float c = Mathf.Clamp01(Charge) * _wake;
             _spin += Time.deltaTime * (18f + 150f * c) * _wake;
+
+            // Walk the swirl head and let it drop its trail. Speed rides the charge, so the ribbon lazes
+            // around a quiet gate and whips around a charged one; distance-gated emission keeps the spacing
+            // even at either pace. Intensity tightens the rune spacing rather than the glow's - the ribbon
+            // is already continuous.
+            _swirlAngle += Time.deltaTime * (0.9f + 2.6f * c) * _wake;
+            Vector3 head = SwirlHead();
+            if (!_swirlPrimed)
+            {
+                _swirlPrimed = true;
+                _lastRuneDrop = head;
+                _lastGlowDrop = head;
+            }
+            if (Vector3.Distance(head, _lastGlowDrop) > 0.10f)
+            {
+                EmitAt(_swirlGlow, head);
+                _lastGlowDrop = head;
+            }
+            if (Vector3.Distance(head, _lastRuneDrop) > Mathf.Max(0.18f, 0.55f / k))
+            {
+                EmitAt(_swirlRunes, head);
+                _lastRuneDrop = head;
+            }
 
             // Vertical rings counter-rotate; the ground sigil turns the other way again.
             if (_ringA != null) _ringA.transform.localRotation = Quaternion.Euler(0f, 0f, _spin);
@@ -381,33 +443,29 @@ namespace TortalPortal
             if (_sigilInner != null) _sigilInner.transform.localRotation = Quaternion.Euler(0f, _spin * 0.8f, 0f);
             if (_sigilRunes != null) _sigilRunes.transform.localRotation = Quaternion.Euler(0f, -_spin * 0.5f, 0f);
 
-            // Every emitter is throttled by wake, so the gate spins up out of nothing and dies back to it.
+            // Every emitter is throttled by wake and scaled by the intensity dial, so the gate spins up out
+            // of nothing and the dial moves the whole show together.
             if (_veil != null)
             {
                 ParticleSystem.EmissionModule em = _veil.emission;
-                em.rateOverTime = (26f + 120f * c) * _wake;
+                em.rateOverTime = (26f + 120f * c) * _wake * k;
                 ParticleSystem.MainModule main = _veil.main;
-                main.startColor = Colour * (1f + 1.6f * c);
+                main.startColor = Colour * ((1f + 1.6f * c) * Mathf.Lerp(0.7f, 1.6f, Mathf.InverseLerp(0.1f, 3f, k)));
             }
             if (_sigilRunes != null)
             {
                 ParticleSystem.EmissionModule em = _sigilRunes.emission;
-                em.rateOverTime = (14f + 50f * c) * _wake;
+                em.rateOverTime = (14f + 50f * c) * _wake * k;
             }
             if (_motes != null)
             {
                 ParticleSystem.EmissionModule em = _motes.emission;
-                em.rateOverTime = 10f * _wake;
-            }
-            if (_orbit != null)
-            {
-                ParticleSystem.EmissionModule em = _orbit.emission;
-                em.rateOverTime = (12f + 45f * c) * _wake;
+                em.rateOverTime = 10f * _wake * k;
             }
 
             // Line widths breathe with the charge so the rings read as energised, not just spinning faster -
             // and scale with wake so the rings condense out of the air instead of snapping on.
-            float w = (1f + 1.8f * c) * _wake;
+            float w = (1f + 1.8f * c) * _wake * Mathf.Sqrt(k);
             Width(_ringA, 0.055f * w); Width(_ringB, 0.04f * w);
             Width(_sigil, 0.07f * w); Width(_sigilInner, 0.05f * w);
             if (_spokes != null) foreach (LineRenderer s in _spokes) Width(s, 0.03f * w);
@@ -430,7 +488,9 @@ namespace TortalPortal
                 Sleep(_veil);
                 Sleep(_motes);
                 Sleep(_sigilRunes);
-                Sleep(_orbit);
+                Sleep(_swirlRunes);
+                Sleep(_swirlGlow);
+                _swirlPrimed = false; // wake fresh: the head must not draw a chord across the gap it slept through
             }
         }
 
@@ -450,7 +510,16 @@ namespace TortalPortal
             if (_veil != null) _veil.Emit(70);
             if (_motes != null) _motes.Emit(45);
             if (_sigilRunes != null) _sigilRunes.Emit(40);
-            if (_orbit != null) _orbit.Emit(30);
+
+            // The swirl flashes as a full ring - its systems are manual-emit and position-less bursts would
+            // just pile particles at the portal's root.
+            for (int i = 0; i < 24; i++)
+            {
+                _swirlAngle += Mathf.PI * 2f / 24f;
+                Vector3 head = SwirlHead();
+                EmitAt(_swirlGlow, head);
+                if (i % 3 == 0) EmitAt(_swirlRunes, head);
+            }
             Charge = 1f;
         }
 

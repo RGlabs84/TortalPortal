@@ -8,8 +8,9 @@
 - **Added:** **Click-n-go.** The portal markers on the great map are now live: click one to select that portal (exactly as if you had clicked its row), click the selected one again to travel. Double-clicking near a portal marker no longer opens vanilla's pin-name box in your face.
 
 ### Favorites
-- **Added:** Every row in the destination list carries a small diamond — click it to star that portal. Favorites sort to the top of the list.
-- **Added:** The **favorites strip**: when you have favorites, the destination window opens as a slender list of just them, one click to travel, with an arrow (`»`) that expands to the full window and one (`«`) that folds it back. `OpenFavoritesView` (local, default on) controls whether it opens folded; PIN-locked favorites expand to the full window for the PIN rather than quick-launching.
+- **Added:** Every row in the destination list carries a small heart — click it and it turns gold: that portal is starred. Favorites sort to the top of the list.
+- **Added:** The **favorites strip**: when you have favorites, the destination window opens as a slender list of just them, one click to travel, with an arrow (`»`) that expands to the full window and one (`«`) that folds it back. `OpenFavoritesView` (local, default on) controls whether it opens folded.
+- **Added:** A PIN-locked portal launched from the strip or a map marker gets the **quick PIN window**: the map closes, a small window opens with the keyboard already in the field, `Enter` fires the PIN — right and you are away, wrong and the screen says so and the field clears for another try. `Esc` cancels back to where you were. (The full window keeps its inline PIN row.)
 - Favorites are yours alone — stored on your machine, per world, keyed to the portal itself so renaming keeps the star. Nothing about them crosses the wire.
 
 ### Riding through
@@ -18,16 +19,24 @@
 - **Added:** `AllowMountedTeleport` (server-synced, default on) turns the whole behaviour off for a server that wants dismount-and-walk.
 - **Added:** `TameFollowRadius` (server-synced, 2–30 m, default 10): how far around you following tames are collected when you travel — previously a hard-coded 10 m.
 
-### The gateway sleeps
+### The gateway sleeps — and swirls
 - **Changed:** The runic gateway is now **dormant until someone approaches**, like vanilla's unlit stone: no rings, no runes, no motes, and no rendering cost, until a player — any player, so a friend walking up lights it for you too — comes within `VFXWakeDistance` (local, 2–50 m, default 8). It condenses out of the air as you arrive and exhales back to nothing when everyone leaves.
-- **Added:** A fifth layer to the effect: **runes orbiting the whole portal**, circling outside the pillars the way vanilla's swirl did, so the gate reads as a portal from every side and not just through the doorway.
+- **Added:** A fifth layer: a **swirling rune trail** circling the whole structure — an unseen point orbits the pillars weaving up and down, drawing a continuous soft-glow ribbon strung with rune glyphs behind it, the same trail technique as Wings of the Valkyrie's wingtips. It lazes around a quiet gate and whips around a charged one.
+- **Changed:** The last vanilla portal visual — the blue "target found" flare — is **gone** while the custom VFX is on; the swirl and the rings carry that job now. Turn `EnableCustomVFX` off and vanilla behaves exactly as before.
+- **Added:** `VFXIntensity` (local, 0.1–3, default 1): one throttle on the whole show — particle density, brightness, ring thickness, rune spacing in the trail.
 
 ### Map markers
 - **Changed:** The portal markers default to **TortalPortal's own rune pin** — a green glyph in a ring, generated at runtime like all of the mod's art. `PortalPinIcon` still offers vanilla's five icons, plus `Custom`: drop a `TortalPortalPin.png` beside the plugin DLL (ship it in a modpack to give a whole server one look) and the markers use it, falling back to the rune pin if the file is missing.
 
 ### Interface
+- **Added:** The full-screen photograph is now an **album**: arrows on either side (and the keyboard's arrow keys) flip through every portal's picture without leaving the lightbox, the portal's name across the top of each. A picture still on its way from the server shows its frame while it loads.
 - **Added:** `ShowDestinationPreviews` (local, default on). Turn it off and the destination window drops the photograph panel and narrows — snapshots are still captured and shared either way, so turning it back on costs nothing.
 - **Added:** `MenuCloseMargin` (local, 0–5 m, default 1): the extra distance beyond `MenuOpenDistance` you must retreat before an open window closes itself — the hysteresis that stops it strobing on the boundary, previously hard-coded.
+- **Changed:** `MenuOpenDistance` now runs 0.1–5 m — at the bottom of the dial you must be standing in the gate itself before the window opens.
+- **Changed:** More headroom on the text dials: `UITextScale` now reaches 3× and `UIFontSizeDelta` +24, for displays where +2 was still squinting territory.
+
+### Colours
+- **Added:** A `5 - Colours` section, all local, all live: `VFXColour` (the whole gateway — veil, rings, sigil, motes, swirl), `PinColour` (the rune map pin), and `UIGoldColour` (the window frames' metal — shadow and highlight tones derive from it, so silver or verdigris is one change).
 
 ### Compatibility
 - Minimum required version stays at 1.0.1 — the portal index format is unchanged. The two new synced settings simply never reach an older client, which cannot ride a mount through anyway.

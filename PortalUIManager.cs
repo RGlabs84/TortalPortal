@@ -62,12 +62,21 @@ namespace TortalPortal
         private string _configPin = "";
         private bool _configHasPin;
 
+        // The quick PIN modal: the small "PIN, Enter, gone" window that locked portals get when launched
+        // from the favorites strip or a map marker, instead of hauling the full window out. While it is up
+        // the map is closed and the keyboard is ours outright, like the configuration window.
+        private PortalEntry _pinTarget;
+        private string _pinModalInput = "";
+        private bool _focusPinModalPending;
+        private bool _pinReturnSlim;
+
         // IMGUI control names, so we can tell whether the player is typing into one of our fields rather
         // than steering their character. See InputFocusPatch.
         private const string SearchFieldName = "TortalPortal.Search";
         private const string PinFieldName = "TortalPortal.Pin";
         private const string ConfigNameFieldName = "TortalPortal.ConfigName";
         private const string ConfigPinFieldName = "TortalPortal.ConfigPin";
+        private const string PinModalFieldName = "TortalPortal.PinModal";
 
         private static bool _fieldFocused;
 
@@ -86,7 +95,8 @@ namespace TortalPortal
         public static bool IsTextInputActive()
         {
             if (_fieldFocused) return true;
-            return _instance != null && _instance._isVisible && _instance._isConfigMode;
+            return _instance != null && _instance._isVisible &&
+                   (_instance._isConfigMode || _instance._pinTarget != null);
         }
 
         // "The mod needs the mouse." Either window, both modes - see InputFocusPatch.
@@ -99,10 +109,11 @@ namespace TortalPortal
         {
             if (_instance == null || !_instance._isVisible) return false;
 
-            // The configuration window and the lightbox are modal - the one is centred over a closed map,
-            // the other covers the whole screen. Nothing behind either should hear the mouse.
+            // The configuration window, the PIN modal and the lightbox are all modal - centred over a closed
+            // map or covering the whole screen. Nothing behind any of them should hear the mouse.
             if (_instance._isConfigMode) return true;
-            if (_instance._previewExpanded && _instance._previewTex != null) return true;
+            if (_instance._pinTarget != null) return true;
+            if (_instance._previewExpanded) return true;
 
             Vector3 mouse = ZInput.mousePosition;
             Vector2 gui = new Vector2(mouse.x, Screen.height - mouse.y);
@@ -113,7 +124,7 @@ namespace TortalPortal
         public static bool IsSelectUIVisible()
         {
             return _instance != null && _instance._isVisible && !_instance._isConfigMode &&
-                   !(_instance._previewExpanded && _instance._previewTex != null);
+                   _instance._pinTarget == null && !_instance._previewExpanded;
         }
 
         // ---- click-n-go (called from MapInputPatch) ----------------------------------------------------------
@@ -165,23 +176,135 @@ namespace TortalPortal
             return best;
         }
 
-        // The one gate every "just go" action funnels through. A locked portal cannot be quick-launched:
-        // the PIN lives in the full window, so the window expands, the portal is selected and the prompt is
-        // already waiting when the player looks.
+        // The one gate every "just go" action funnels through. A locked portal cannot be quick-launched -
+        // but it should not haul the whole window out either. It gets the small PIN modal: map closes,
+        // keyboard locks straight to the field, Enter fires it in.
         private void GoOrPrompt(PortalEntry e)
         {
             if (e.Locked && !Configuration.IsAdmin())
             {
-                _slim = false;
-                Select(e);
-                if (Player.m_localPlayer != null)
-                {
-                    Player.m_localPlayer.Message(MessageHud.MessageType.Center, "That portal is PIN-locked - enter the PIN in the window.");
-                }
+                OpenPinModal(e);
                 return;
             }
 
             ExecuteTeleport(e);
+        }
+
+        // ---- quick PIN modal ---------------------------------------------------------------------------
+
+        private void OpenPinModal(PortalEntry e)
+        {
+            _pinTarget = e;
+            _pinModalInput = "";
+            _focusPinModalPending = true;
+            _pinReturnSlim = _slim;
+
+            // The PIN lives on the portal's own ZDO - start it travelling now so it is usually here before
+            // the player finishes typing.
+            _selected = e;
+            StopDetailFetch();
+            e.Details = DetailState.Pending;
+            _detailFetch = StartCoroutine(ResolveDetails(e));
+
+            // A modal over a live map reads as part of the map; over nothing it reads as a question.
+            if (Minimap.instance != null) Minimap.instance.SetMapMode(Minimap.MapMode.None);
+        }
+
+        // Cancel path: back to exactly where the player was - map up, same window shape.
+        private void ClosePinModal()
+        {
+            _pinTarget = null;
+            _pinModalInput = "";
+            _releaseFocus = true;
+            _slim = _pinReturnSlim;
+            if (Minimap.instance != null) Minimap.instance.SetMapMode(Minimap.MapMode.Large);
+        }
+
+        private void SubmitPinModal()
+        {
+            PortalEntry e = _pinTarget;
+            if (e == null) return;
+
+            if (e.Details == DetailState.Pending)
+            {
+                Player.m_localPlayer.Message(MessageHud.MessageType.Center, "Still reading that portal...");
+                return;
+            }
+            if (e.Details == DetailState.Unavailable)
+            {
+                Player.m_localPlayer.Message(MessageHud.MessageType.Center, "That portal could not be reached.");
+                return;
+            }
+
+            if (_pinModalInput == e.Pin)
+            {
+                _pinTarget = null;
+                _pinModalInput = "";
+                ExecuteTeleport(e);
+            }
+            else
+            {
+                // Stay up for another try - the wrong guess is announced, the field is cleared, and the
+                // focus never left it.
+                Player.m_localPlayer.Message(MessageHud.MessageType.Center, "Wrong PIN!");
+                _pinModalInput = "";
+            }
+        }
+
+        private void DrawPinModal()
+        {
+            // Enter submits from anywhere in the modal. Read BEFORE the field is drawn, because a focused
+            // IMGUI field swallows the KeyDown once it has seen it.
+            Event ev = Event.current;
+            if (ev != null && ev.type == EventType.KeyDown &&
+                (ev.keyCode == KeyCode.Return || ev.keyCode == KeyCode.KeypadEnter))
+            {
+                ev.Use();
+                SubmitPinModal();
+                if (_pinTarget == null) return; // correct PIN: the window is gone, stop drawing it
+            }
+
+            float w = Mathf.Min(Screen.width - 80f, TortalUITheme.S(440f));
+            float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(300f));
+            Rect win = new Rect(Mathf.Round((Screen.width - w) * 0.5f), Mathf.Round((Screen.height - h) * 0.5f), w, h);
+
+            TortalUITheme.DrawWindow(win, "PIN Required");
+
+            Rect body = TortalUITheme.Body(win);
+            float y = body.y;
+            float lineH = TortalUITheme.S(24f);
+            float fieldH = TortalUITheme.S(30f);
+
+            GUI.Label(new Rect(body.x, y, body.width, lineH), _pinTarget.Tag, TortalUITheme.SubTitle);
+            y += lineH + 10f;
+
+            GUI.SetNextControlName(PinModalFieldName);
+            _pinModalInput = GUI.PasswordField(new Rect(body.x, y, body.width, fieldH), _pinModalInput, '*', 10, TortalUITheme.Field);
+
+            if (_focusPinModalPending)
+            {
+                _focusPinModalPending = false;
+                GUI.FocusControl(PinModalFieldName);
+            }
+
+            float btnH = TortalUITheme.S(40f);
+            Rect unlock = new Rect(body.x, body.yMax - btnH, body.width * 0.5f - 8f, btnH);
+            Rect cancel = new Rect(unlock.xMax + 16f, unlock.y, unlock.width, unlock.height);
+
+            if (GUI.Button(unlock, "Unlock", TortalUITheme.Primary))
+            {
+                SubmitPinModal();
+                if (_pinTarget == null) return;
+            }
+            if (GUI.Button(cancel, "Cancel", TortalUITheme.Primary))
+            {
+                ClosePinModal();
+                return;
+            }
+
+            GUI.Label(TortalUITheme.FooterLine(win),
+                      _pinTarget.Details == DetailState.Pending ? "reading the portal..." : "Enter unlocks  ·  Esc cancels",
+                      TortalUITheme.Footer);
         }
 
         public static void Init()
@@ -246,6 +369,8 @@ namespace TortalPortal
             _instance._showPinPrompt = false;
             _instance._pinInput = "";
             _instance._focusSearchPending = false;
+            _instance._pinTarget = null;
+            _instance._pinModalInput = "";
 
             CurrentSourcePortal = targetPortal;
             _instance._isConfigMode = true;
@@ -271,6 +396,9 @@ namespace TortalPortal
                 _instance._pinInput = "";
                 _instance._previewExpanded = false;
                 _instance._focusSearchPending = false;
+                _instance._pinTarget = null;
+                _instance._pinModalInput = "";
+                _instance._focusPinModalPending = false;
                 _instance.StopDetailFetch();
                 _instance.ClearMapPins();
                 _instance.ClearPreview();
@@ -389,25 +517,41 @@ namespace TortalPortal
             if (!_isVisible) return;
             TortalUITheme.EnsureBuilt();
 
-            // Escape backs out of a field without closing the window, so there is always a way to hand the
-            // keyboard back that is not "click somewhere harmless".
-            if (_fieldFocused && Event.current != null &&
-                Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
+            // Escape: the PIN modal cancels outright, otherwise it backs out of a field without closing the
+            // window, so there is always a way to hand the keyboard back that is not "click somewhere
+            // harmless" - and the lightbox closes, since a click-anywhere overlay should also be Esc-able.
+            if (Event.current != null && Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
             {
-                _releaseFocus = true;
-                Event.current.Use();
+                if (_pinTarget != null)
+                {
+                    Event.current.Use();
+                    ClosePinModal();
+                    return;
+                }
+                if (_previewExpanded)
+                {
+                    Event.current.Use();
+                    _previewExpanded = false;
+                }
+                else if (_fieldFocused)
+                {
+                    _releaseFocus = true;
+                    Event.current.Use();
+                }
             }
 
-            // Auto-close if the map is closed, but only while picking a destination - the config window is
-            // opened from Interact and has nothing to do with the map.
-            if (!_isConfigMode && Minimap.instance != null && Minimap.instance.m_mode != Minimap.MapMode.Large)
+            // Auto-close if the map is closed, but only while picking a destination - the config window and
+            // the PIN modal deliberately close the map themselves and must survive doing so.
+            if (!_isConfigMode && _pinTarget == null &&
+                Minimap.instance != null && Minimap.instance.m_mode != Minimap.MapMode.Large)
             {
                 HideUI();
                 return;
             }
 
-            if (_isConfigMode) DrawConfigUI();
-            else if (_previewExpanded && _previewTex != null && _selected != null) DrawExpandedPreview();
+            if (_pinTarget != null) DrawPinModal();
+            else if (_isConfigMode) DrawConfigUI();
+            else if (_previewExpanded && _selected != null) DrawExpandedPreview();
             else if (_slim) DrawSlimUI();
             else DrawSelectUI();
 
@@ -417,7 +561,8 @@ namespace TortalPortal
             // window needs its own on-screen control instead; see the "Name & PIN" button in DrawSelectUI.
             string focused = GUI.GetNameOfFocusedControl();
             _fieldFocused = focused == SearchFieldName || focused == PinFieldName ||
-                            focused == ConfigNameFieldName || focused == ConfigPinFieldName;
+                            focused == ConfigNameFieldName || focused == ConfigPinFieldName ||
+                            focused == PinModalFieldName;
         }
 
         // Shared so the map-centring maths and the map-input blocking know exactly how much of the screen
@@ -513,7 +658,7 @@ namespace TortalPortal
             DrawDetails(detail);
 
             GUI.Label(TortalUITheme.FooterLine(win),
-                      "Type to filter  ·  click a map marker to select, click it again to travel  ·  the diamond stars a favorite  ·  Esc frees the keyboard",
+                      "Type to filter  ·  click a map marker to select, click it again to travel  ·  the heart stars a favorite  ·  Esc frees the keyboard",
                       TortalUITheme.Footer);
         }
 
@@ -571,7 +716,7 @@ namespace TortalPortal
             if (shown == 0)
             {
                 GUILayout.Space(24f);
-                GUILayout.Label("No favorites in this world yet.\nExpand with » and mark some portals with the diamond.", TortalUITheme.Note);
+                GUILayout.Label("No favorites in this world yet.\nExpand with » and mark some portals with the heart.", TortalUITheme.Note);
             }
 
             GUILayout.EndScrollView();
@@ -618,7 +763,7 @@ namespace TortalPortal
                     e.Fav = !e.Fav;
                     resort = true;
                 }
-                TortalUITheme.DrawDiamondMark(mark, e.Fav);
+                TortalUITheme.DrawHeartMark(mark, e.Fav);
             }
             if (resort) SortEntries();
 
@@ -947,9 +1092,20 @@ namespace TortalPortal
         // picker entirely is the only reliable way to make a modal modal.
         private void DrawExpandedPreview()
         {
+            // Arrow keys page through the album, matching the on-screen arrows.
+            Event ev = Event.current;
+            if (ev != null && ev.type == EventType.KeyDown)
+            {
+                if (ev.keyCode == KeyCode.LeftArrow) { ev.Use(); CyclePreview(-1); return; }
+                if (ev.keyCode == KeyCode.RightArrow) { ev.Use(); CyclePreview(1); return; }
+            }
+
             TortalUITheme.DrawFill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0f, 0f, 0f, 0.86f));
 
-            float aspect = _previewTex.height > 0 ? _previewTex.width / (float)_previewTex.height : 16f / 9f;
+            // A snapshot still on its way from the server (mid-cycle) gets a 16:9 frame to arrive into.
+            float aspect = _previewTex != null && _previewTex.height > 0
+                ? _previewTex.width / (float)_previewTex.height
+                : 16f / 9f;
             float chromeW = 2f * (TortalUITheme.Band + TortalUITheme.Pad);
             float chromeH = 2f * TortalUITheme.Band + TortalUITheme.TitleHeight + TortalUITheme.FooterHeight;
 
@@ -969,20 +1125,73 @@ namespace TortalPortal
 
             // Body() is exactly the image rect - the window was built around it.
             Rect body = TortalUITheme.Body(win);
-            GUI.DrawTexture(body, _previewTex, ScaleMode.ScaleToFit);
+            if (_previewTex != null)
+            {
+                GUI.DrawTexture(body, _previewTex, ScaleMode.ScaleToFit);
+            }
+            else
+            {
+                GUI.Label(body,
+                          _selected.Details == DetailState.Pending ? "Reading portal..." :
+                          _selected.Details == DetailState.Unavailable ? "Could not reach that portal." :
+                          "No snapshot captured yet.",
+                          TortalUITheme.Note);
+            }
             TortalUITheme.DrawOutline(body, new Color(TortalUITheme.Gold.r, TortalUITheme.Gold.g, TortalUITheme.Gold.b, 0.8f), 1f);
 
             GUI.Label(TortalUITheme.FooterLine(win),
                       $"{PrettyBiome(_selected.Biome)}   ·   {(int)_selected.Pos.x}, {(int)_selected.Pos.y}, {(int)_selected.Pos.z}" +
-                      "   ·   click anywhere to close",
+                      "   ·   arrows flip through portals   ·   click anywhere to close",
                       TortalUITheme.Footer);
 
+            // The page-turn arrows, parked in the side gutters outside the frame.
+            float arrowW = TortalUITheme.S(52f);
+            float arrowH = TortalUITheme.S(96f);
+            Rect prev = new Rect(Mathf.Max(8f, win.x - arrowW - 12f), Mathf.Round((Screen.height - arrowH) * 0.5f), arrowW, arrowH);
+            Rect next = new Rect(Mathf.Min(Screen.width - arrowW - 8f, win.xMax + 12f), prev.y, arrowW, arrowH);
+
+            bool cycled = false;
+            if (GUI.Button(prev, "<", TortalUITheme.Primary)) { CyclePreview(-1); cycled = true; }
+            if (GUI.Button(next, ">", TortalUITheme.Primary)) { CyclePreview(1); cycled = true; }
+
             // Drawn last so it sits over the frame. GUIStyle.none keeps it genuinely invisible - the row style's
-            // hover tint would wash the entire screen gold.
-            if (GUI.Button(new Rect(0f, 0f, Screen.width, Screen.height), GUIContent.none, GUIStyle.none))
+            // hover tint would wash the entire screen gold. IMGUI fires EVERY control under a click, so a click
+            // on an arrow also lands here - the hover check is what keeps a page-turn from closing the album.
+            bool overArrow = ev != null && (prev.Contains(ev.mousePosition) || next.Contains(ev.mousePosition));
+            if (GUI.Button(new Rect(0f, 0f, Screen.width, Screen.height), GUIContent.none, GUIStyle.none) && !cycled && !overArrow)
             {
                 _previewExpanded = false;
             }
+        }
+
+        // Page to the neighbouring portal in the list order the player is already looking at (favorites
+        // first, then alphabetical, honouring the current search filter), staying inside the lightbox. The
+        // new portal's snapshot is fetched exactly as a row click would - the frame just waits for it.
+        private void CyclePreview(int dir)
+        {
+            List<PortalEntry> visible = new List<PortalEntry>();
+            string filter = _searchFilter == null ? "" : _searchFilter.ToLowerInvariant();
+            foreach (PortalEntry e in _entries)
+            {
+                if (filter.Length > 0 && e.SearchKey.IndexOf(filter, StringComparison.Ordinal) < 0) continue;
+                visible.Add(e);
+            }
+            if (visible.Count == 0) { _previewExpanded = false; return; }
+
+            int idx = _selected != null ? visible.IndexOf(_selected) : -1;
+            idx = idx < 0 ? 0 : (idx + dir + visible.Count) % visible.Count;
+
+            PortalEntry chosen = visible[idx];
+            _selected = chosen;
+            _showPinPrompt = chosen.Locked && !Configuration.IsAdmin();
+            _pinInput = "";
+            ClearPreview();
+
+            StopDetailFetch();
+            chosen.Details = DetailState.Pending;
+            _detailFetch = StartCoroutine(ResolveDetails(chosen));
+            HighlightPin(chosen);
+            // _previewExpanded stays true - that is the whole point.
         }
 
         private void DrawConfigUI()

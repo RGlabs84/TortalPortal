@@ -18,11 +18,16 @@ namespace TortalPortal
     // mirrored corner is still lit correctly, because mirroring only moves pixels, never the lamp.
     internal static class TortalUITheme
     {
-        public static readonly Color GoldDeep = new Color(0.26f, 0.17f, 0.05f, 1f);
-        public static readonly Color Gold = new Color(0.80f, 0.62f, 0.26f, 1f);
-        public static readonly Color GoldBright = new Color(1.00f, 0.94f, 0.72f, 1f);
+        // The metal is one config colour (UIGoldColour); the shadow and highlight tones are derived from it,
+        // so a recolour to silver or verdigris is a single dial. Defaults reproduce the original gilt exactly.
+        public static Color GoldDeep = new Color(0.26f, 0.17f, 0.05f, 1f);
+        public static Color Gold = new Color(0.80f, 0.62f, 0.26f, 1f);
+        public static Color GoldBright = new Color(1.00f, 0.94f, 0.72f, 1f);
         public static readonly Color Parchment = new Color(0.90f, 0.86f, 0.75f, 1f);
         public static readonly Color Muted = new Color(0.60f, 0.56f, 0.48f, 1f);
+
+        // The base colour the current texture set was baked from, so a config change is noticed.
+        private static Color _builtGold = new Color(0.80f, 0.62f, 0.26f, 1f);
 
         // Rich-text colours, kept beside the Color values they mirror so the two never drift apart.
         public const string HexMuted = "#9A9182";
@@ -65,7 +70,7 @@ namespace TortalPortal
 
         private static Texture2D _railTop, _railBottom, _railLeft, _railRight;
         private static Texture2D _cornerTL, _cornerTR, _cornerBL, _cornerBR;
-        private static Texture2D _crestTop, _crestBottom, _diamond;
+        private static Texture2D _crestTop, _crestBottom, _diamond, _heart;
         private static Texture2D _panel, _white;
         private static Texture2D _btnNormal, _btnHover, _btnActive;
         private static Texture2D _rowNormal, _rowHover, _rowActive, _selection;
@@ -75,6 +80,14 @@ namespace TortalPortal
         // "already built" and "still alive" are different questions.
         public static void EnsureBuilt()
         {
+            // A changed metal colour invalidates every baked pixel. Rebuilding the full set costs a few
+            // milliseconds ONCE per dial change - the check itself is two colour compares per frame.
+            Color wantedGold = Configuration.uiGoldColour != null ? Configuration.uiGoldColour.Value : _builtGold;
+            if (_railTop != null && wantedGold != _builtGold)
+            {
+                DestroyTextures();
+            }
+
             if (_railTop != null)
             {
                 // Styles are cheap to rebuild and textures are not, so UITextScale is picked up live without
@@ -86,6 +99,21 @@ namespace TortalPortal
                     BuildStyles(wanted, wantedDelta);
                 }
                 return;
+            }
+
+            // Derive the family from the base metal. The untouched default gets the original hand-tuned
+            // trio verbatim, so nobody who never opens the dial sees a single pixel change.
+            _builtGold = wantedGold;
+            Gold = new Color(wantedGold.r, wantedGold.g, wantedGold.b, 1f);
+            if (Mathf.Approximately(Gold.r, 0.80f) && Mathf.Approximately(Gold.g, 0.62f) && Mathf.Approximately(Gold.b, 0.26f))
+            {
+                GoldDeep = new Color(0.26f, 0.17f, 0.05f, 1f);
+                GoldBright = new Color(1.00f, 0.94f, 0.72f, 1f);
+            }
+            else
+            {
+                GoldDeep = new Color(Gold.r * 0.325f, Gold.g * 0.274f, Gold.b * 0.192f, 1f);
+                GoldBright = Color.Lerp(Gold, Color.white, 0.72f);
             }
 
             _railTop = BuildRail(Edge.Top);
@@ -101,6 +129,7 @@ namespace TortalPortal
             _crestTop = BuildCrest(false);
             _crestBottom = BuildCrest(true);
             _diamond = BuildDiamond(14);
+            _heart = BuildHeart(28);
 
             _panel = BuildPanel(64);
             _white = BuildSolid(Color.white);
@@ -110,14 +139,43 @@ namespace TortalPortal
             _btnActive = BuildPatch(new Color(0.300f, 0.230f, 0.110f, 0.98f), GoldBright);
 
             _rowNormal = BuildPatch(Color.clear, Color.clear);
-            _rowHover = BuildPatch(new Color(0.80f, 0.62f, 0.26f, 0.10f), new Color(0.80f, 0.62f, 0.26f, 0.45f));
-            _rowActive = BuildPatch(new Color(0.80f, 0.62f, 0.26f, 0.20f), Gold);
-            _selection = BuildSolid(new Color(0.80f, 0.62f, 0.26f, 0.15f));
+            _rowHover = BuildPatch(new Color(Gold.r, Gold.g, Gold.b, 0.10f), new Color(Gold.r, Gold.g, Gold.b, 0.45f));
+            _rowActive = BuildPatch(new Color(Gold.r, Gold.g, Gold.b, 0.20f), Gold);
+            _selection = BuildSolid(new Color(Gold.r, Gold.g, Gold.b, 0.15f));
 
             _fieldTex = BuildPatch(new Color(0.03f, 0.03f, 0.025f, 0.95f), GoldDeep);
 
             BuildStyles(Configuration.uiTextScale != null ? Configuration.uiTextScale.Value : 1f,
                         Configuration.uiFontSizeDelta != null ? Configuration.uiFontSizeDelta.Value : 0);
+        }
+
+        // Tear the whole baked set down so EnsureBuilt regenerates it in the new metal. Explicit destroys,
+        // not just dropped references - HideAndDontSave textures are immortal until somebody kills them.
+        private static void DestroyTextures()
+        {
+            Texture2D[] all =
+            {
+                _railTop, _railBottom, _railLeft, _railRight,
+                _cornerTL, _cornerTR, _cornerBL, _cornerBR,
+                _crestTop, _crestBottom, _diamond, _heart,
+                _panel, _white,
+                _btnNormal, _btnHover, _btnActive,
+                _rowNormal, _rowHover, _rowActive, _selection,
+                _fieldTex
+            };
+            foreach (Texture2D t in all)
+            {
+                if (t != null) UnityEngine.Object.Destroy(t);
+            }
+
+            _railTop = _railBottom = _railLeft = _railRight = null;
+            _cornerTL = _cornerTR = _cornerBL = _cornerBR = null;
+            _crestTop = _crestBottom = _diamond = _heart = null;
+            _panel = _white = null;
+            _btnNormal = _btnHover = _btnActive = null;
+            _rowNormal = _rowHover = _rowActive = _selection = null;
+            _fieldTex = null;
+            Title = null; // styles reference dead textures now; BuildStyles runs after the rebake
         }
 
         // ---- window chrome -------------------------------------------------------------------------------
@@ -209,14 +267,15 @@ namespace TortalPortal
             GUI.DrawTexture(r, _selection);
         }
 
-        // The favorite mark: the frame's own lozenge, full-strength when starred and a ghost when not. One
-        // ornament doing double duty keeps the row furniture in the family - a text star would be at the
-        // mercy of whichever font the lookup found.
-        public static void DrawDiamondMark(Rect r, bool lit)
+        // The favorite mark: a heart that turns gold when starred, a grey ghost when not. Drawn from our own
+        // generated texture rather than a text glyph, so it is never at the mercy of whichever font the
+        // lookup found. The texture is baked white and tinted here, so one texture serves both states and
+        // any future colour.
+        public static void DrawHeartMark(Rect r, bool lit)
         {
             Color prev = GUI.color;
-            GUI.color = lit ? Color.white : new Color(1f, 1f, 1f, 0.22f);
-            GUI.DrawTexture(r, _diamond, ScaleMode.ScaleToFit);
+            GUI.color = lit ? Gold : new Color(0.75f, 0.75f, 0.75f, 0.28f);
+            GUI.DrawTexture(r, _heart, ScaleMode.ScaleToFit);
             GUI.color = prev;
         }
 
@@ -243,8 +302,8 @@ namespace TortalPortal
 
         private static void BuildStyles(float scale, int fontDelta)
         {
-            TextScale = Mathf.Clamp(scale, 0.6f, 2f);
-            _fontDelta = Mathf.Clamp(fontDelta, -6, 12);
+            TextScale = Mathf.Clamp(scale, 0.6f, 3f);
+            _fontDelta = Mathf.Clamp(fontDelta, -6, 24);
 
             // The title and footer bands have to grow with the delta as well as the scale, or a positive
             // delta just clips the text they exist to hold. Only a POSITIVE delta widens them - shrinking the
@@ -469,6 +528,39 @@ namespace TortalPortal
             float mid = (size - 1) * 0.5f;
             p.Lozenge(mid, mid, size * 0.36f);
             return p.Bake();
+        }
+
+        // The favorite heart, baked WHITE so DrawHeartMark can tint one texture into both its states. Drawn
+        // from the classic implicit heart curve, 2x2 supersampled for a clean edge at icon size. Row 0 of a
+        // texture is the bottom, and the curve is authored y-up, which for once means NO flip.
+        private static Texture2D BuildHeart(int size)
+        {
+            Texture2D tex = New(size, size, TextureWrapMode.Clamp, UnityEngine.FilterMode.Bilinear);
+            Color[] px = new Color[size * size];
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float hit = 0f;
+                    for (int sy = 0; sy < 2; sy++)
+                    {
+                        for (int sx = 0; sx < 2; sx++)
+                        {
+                            // Map the pixel into the curve's frame: x in [-1.3, 1.3], y in [-1.5, 1.4].
+                            float u = ((x + (sx + 0.5f) * 0.5f) / size - 0.5f) * 2.6f;
+                            float v = ((y + (sy + 0.5f) * 0.5f) / size - 0.42f) * 2.9f;
+                            float a = u * u + v * v - 1f;
+                            if (a * a * a - u * u * v * v * v <= 0f) hit += 0.25f;
+                        }
+                    }
+                    px[y * size + x] = new Color(1f, 1f, 1f, hit);
+                }
+            }
+
+            tex.SetPixels(px);
+            tex.Apply(false);
+            return tex;
         }
 
         // ---- flat textures ---------------------------------------------------------------------------------

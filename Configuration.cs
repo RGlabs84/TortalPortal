@@ -1,5 +1,6 @@
 using BepInEx.Configuration;
 using ServerSync;
+using UnityEngine;
 
 namespace TortalPortal
 {
@@ -61,6 +62,10 @@ namespace TortalPortal
         public static ConfigEntry<bool> enableCustomVFX;
         public static ConfigEntry<float> vfxOrbHeightOffset;
         public static ConfigEntry<float> vfxWakeDistance;
+        public static ConfigEntry<float> vfxIntensity;
+        public static ConfigEntry<Color> vfxColour;
+        public static ConfigEntry<Color> pinColour;
+        public static ConfigEntry<Color> uiGoldColour;
         public static ConfigEntry<bool> enablePortalCameraShot;
         public static ConfigEntry<int> snapshotRefreshIntervalMinutes;
         public static ConfigEntry<float> portalIndexRefreshSeconds;
@@ -96,8 +101,8 @@ namespace TortalPortal
             allowMountedTeleport = config.Bind("3 - Features", "AllowMountedTeleport", true,
                 "If true, teleporting while riding a tamed creature sends the mount through with you and puts you back in the saddle on arrival. Works with anything ridden through the game's own mount controls - vanilla saddles, custom saddle items, OdinMounts and the like. Ships and other steered contraptions are never dragged through.");
             menuOpenDistance = config.Bind("3 - Features", "MenuOpenDistance", 2.5f,
-                new ConfigDescription("How close you have to be, in metres, before the destination window opens by itself. Vanilla's portal activation range is 5m, which puts the window in your face while you are still walking up. Lower this to be left alone until you are actually at the gate. Only affects the window - the portal's glow and connection effect keep their own range.",
-                                      new AcceptableValueRange<float>(1f, 10f)));
+                new ConfigDescription("How close you have to be, in metres, before the destination window and map open by themselves. Vanilla's portal activation range is 5m, which puts the window in your face while you are still walking up. Down at 0.1 you have to be standing IN the gate. Only affects the window - the portal's visuals keep their own range.",
+                                      new AcceptableValueRange<float>(0.1f, 5f)));
             // Local: how sticky the window is once open is a personal taste, not a rule of the world.
             menuCloseMargin = config.Bind("3 - Features", "MenuCloseMargin", 1f,
                 new ConfigDescription("Extra metres beyond MenuOpenDistance you have to retreat before an open destination window closes itself. This is the hysteresis that stops the window strobing when you hover right on the boundary.",
@@ -110,6 +115,18 @@ namespace TortalPortal
             vfxWakeDistance = config.Bind("3 - Features", "VFXWakeDistance", 8f,
                 new ConfigDescription("How close, in metres, a player has to be before the rune gateway wakes up. Beyond this the portal sits dormant like vanilla - no rings, no runes, no motes - and it spins up as someone approaches.",
                                       new AcceptableValueRange<float>(2f, 50f)));
+            vfxIntensity = config.Bind("3 - Features", "VFXIntensity", 1f,
+                new ConfigDescription("Overall throttle on the rune gateway: particle density, brightness and ring thickness all scale with it. 1 is the designed look; below it the gate smoulders, above it it roars.",
+                                      new AcceptableValueRange<float>(0.1f, 3f)));
+
+            // The dials. All local - what colour someone's world glows is their own business, and none of it
+            // crosses the wire. BepInEx renders these as colour pickers in ConfigurationManager.
+            vfxColour = config.Bind("5 - Colours", "VFXColour", new Color(0.30f, 1.00f, 0.55f, 1f),
+                "The rune gateway's colour - veil, rings, sigil, motes and the swirl trail all draw from this.");
+            pinColour = config.Bind("5 - Colours", "PinColour", new Color(0.30f, 1.00f, 0.55f, 1f),
+                "The Rune map pin's colour (glyph and ring). Ignored for vanilla icons and Custom PNGs, which bring their own colours.");
+            uiGoldColour = config.Bind("5 - Colours", "UIGoldColour", new Color(0.80f, 0.62f, 0.26f, 1f),
+                "The metal of the window frames. The deep shadow and bright highlight tones are derived from this one colour, so silver, bronze or verdigris is a single change. Applies live.");
             enablePortalCameraShot = config.Bind("3 - Features", "EnablePortalCameraShot", true, "If true, takes a camera snapshot when a portal is placed for the UI preview.");
             snapshotRefreshIntervalMinutes = config.Bind("3 - Features", "SnapshotRefreshIntervalMinutes", 30, "Interval in minutes for the background coroutine to refresh active portal snapshots. Set to 0 to disable.");
             portalIndexRefreshSeconds = config.Bind("3 - Features", "PortalIndexRefreshSeconds", 10f,
@@ -132,11 +149,11 @@ namespace TortalPortal
             // Also local-only, and picked up live: the theme rebuilds its styles when this changes.
             uiTextScale = config.Bind("3 - Features", "UITextScale", 1f,
                 new ConfigDescription("Scales all text in the portal windows. 1 is the designed size.",
-                                      new AcceptableValueRange<float>(0.6f, 2f)));
+                                      new AcceptableValueRange<float>(0.6f, 3f)));
             uiFontSizeDelta = config.Bind("3 - Features", "UIFontSizeDelta", 2,
                 new ConfigDescription(
                     "FLAT points added to every text size in the portal windows, applied after UITextScale. Defaults to +2 to match Fatty, which shares this theme and runs the same +2 - set both to the same number and the two mods' windows read identically. 0 = the theme's own base sizes.",
-                    new AcceptableValueRange<int>(-6, 12)));
+                    new AcceptableValueRange<int>(-6, 24)));
 
             enableDebugMode = config.Bind("4 - Debug", "EnableDebugLogging", false, "Enable verbose logging to the console for debugging UI and teleportation events.");
 

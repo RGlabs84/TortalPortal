@@ -184,10 +184,12 @@ namespace TortalPortal
                     portal.m_connected.Create(portal.transform.position, portal.transform.rotation);
                 }
 
-                // The glowing inner center lights up only if the LOCAL player can actually teleport.
+                // The last vanilla visual: the "target found" flare. With the custom VFX on it is replaced
+                // outright by the rune swirl and stays dark; with the custom VFX off, vanilla behaviour -
+                // lit only when the LOCAL player can actually teleport.
                 if (portal.m_target_found != null)
                 {
-                    portal.m_target_found.SetActive(localCanTeleport);
+                    portal.m_target_found.SetActive(!Configuration.enableCustomVFX.Value && localCanTeleport);
                 }
             }
             catch (Exception ex)
