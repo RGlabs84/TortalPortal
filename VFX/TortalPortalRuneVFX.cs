@@ -10,7 +10,7 @@ namespace TortalPortal
     // from Wings of the Valkyrie. Nothing here ships a custom shader, so none of it can render pink, and none
     // of it needs to be in the AssetBundle: it is all generated at runtime.
     //
-    // Four layers, because one particle system on its own reads as a campfire rather than a gateway:
+    // Five layers, because one particle system on its own reads as a campfire rather than a gateway:
     //   1. VEIL    - a wall of runes filling the doorway, drifting upward and fading. The "surface" you step
     //                through. Each particle draws a different glyph via the 4x4 atlas.
     //   2. RINGS   - two counter-rotating vertical rune circles standing in the gap, so the gateway reads as
@@ -18,9 +18,14 @@ namespace TortalPortal
     //   3. SIGIL   - a horizontal magic circle scribed on the ground across the threshold, which is what sells
     //                the "this is a portal" read from a distance and from above.
     //   4. MOTES   - slow embers rising out of the sigil and past the pillars, tying the whole site together.
+    //   5. ORBIT   - runes circling the whole structure the way vanilla's swirl did, so the portal reads as a
+    //                portal from every side and not just through the doorway.
     //
-    // The whole thing responds to the player: TortalPortalWalkTrigger drives Charge from 0..1 while they stand
-    // in the doorway, and everything spins up, brightens and pulls inward as it climbs.
+    // The whole thing responds to the player twice over. WAKE is distance: the gate sits fully dormant - no
+    // rings, no runes, no motes, exactly like an unlit vanilla portal - until a player (ANY player, so a
+    // friend walking up lights it for you too) comes within VFXWakeDistance, and it fades down again when
+    // everyone leaves. CHARGE is activity: driven from the behaviour patch while the gate has someone in
+    // range, and everything spins faster, brightens and thickens as it climbs.
     public class TortalPortalRuneVFX : MonoBehaviour
     {
         public Color Colour = new Color(0.30f, 1.00f, 0.55f);
@@ -32,10 +37,16 @@ namespace TortalPortal
 
         private ParticleSystem _veil;
         private ParticleSystem _motes;
+        private ParticleSystem _orbit;
         private LineRenderer _ringA, _ringB, _sigil, _sigilInner;
         private LineRenderer[] _spokes;
         private ParticleSystem _sigilRunes;
         private float _spin;
+
+        // 0 = dormant, 1 = fully awake. Chased toward "is any player near" every frame; everything visible
+        // is scaled by it, so approach is a fade-in rather than a pop.
+        private float _wake;
+        private bool _shown = true;
 
         // Local Y that the veil and the two vertical rings - the "orb" hanging in the doorway - are built at.
         // Measured from the portal's own geometry in Start(); see MeasureGateCentre.
@@ -74,6 +85,12 @@ namespace TortalPortal
             BuildRings(glowMat);
             BuildSigil(glowMat, runeMat);
             BuildMotes(runeMat);
+            BuildOrbit(runeMat);
+
+            // Born dormant, like vanilla: a portal loading in at the edge of view distance should not be
+            // running its light show for nobody. The first Update wakes it if someone is already close.
+            _wake = 0f;
+            SetShown(false);
         }
 
         // Where the middle of the doorway actually is, in local Y.
@@ -241,6 +258,54 @@ namespace TortalPortal
             rr.receiveShadows = false;
         }
 
+        // ---- 5. Runes circling the whole portal, the way vanilla's swirl did ----------------------------
+        private void BuildOrbit(Material mat)
+        {
+            GameObject go = Child("OrbitRunes", new Vector3(0f, Mathf.Max(0.6f, _orbHeight * 0.55f), 0f));
+            _orbit = go.AddComponent<ParticleSystem>();
+
+            ParticleSystem.MainModule main = _orbit.main;
+            main.loop = true;
+            main.playOnAwake = true;
+            main.startSpeed = 0f;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(3.5f, 6f);
+            main.startSize = new ParticleSystem.MinMaxCurve(0.2f, 0.38f);
+            main.startColor = Colour;
+            main.maxParticles = 120;
+            // Local, like the veil: the orbit belongs to the structure, not to the air around it.
+            main.simulationSpace = ParticleSystemSimulationSpace.Local;
+
+            ParticleSystem.EmissionModule em = _orbit.emission;
+            em.rateOverTime = 12f;
+
+            // A flat ring just outside the pillars, so the runes pass AROUND the stone rather than through it.
+            ParticleSystem.ShapeModule sh = _orbit.shape;
+            sh.enabled = true;
+            sh.shapeType = ParticleSystemShapeType.Circle;
+            sh.radius = GateWidth * 1.05f;
+            sh.radiusThickness = 0.1f;
+            sh.rotation = new Vector3(90f, 0f, 0f);
+
+            // The orbit itself. Same lesson as the veil, one module over: every curve in the module must be
+            // in the same MinMaxCurve mode or Unity throws the whole module away - so all three orbital axes
+            // are two-constant ranges even though only Y actually turns.
+            ParticleSystem.VelocityOverLifetimeModule vel = _orbit.velocityOverLifetime;
+            vel.enabled = true;
+            vel.space = ParticleSystemSimulationSpace.Local;
+            vel.orbitalX = new ParticleSystem.MinMaxCurve(0f, 0f);
+            vel.orbitalY = new ParticleSystem.MinMaxCurve(0.45f, 0.75f);
+            vel.orbitalZ = new ParticleSystem.MinMaxCurve(0f, 0f);
+
+            FadeInOut(_orbit);
+            Atlas(_orbit);
+
+            ParticleSystemRenderer r = go.GetComponent<ParticleSystemRenderer>();
+            r.renderMode = ParticleSystemRenderMode.Billboard;
+            r.material = mat;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+        }
+
         // ---- 4. Slow embers rising out of the sigil -----------------------------------------------------
         private void BuildMotes(Material mat)
         {
@@ -279,12 +344,32 @@ namespace TortalPortal
 
         private void Update()
         {
+            // Dormant until approached, like vanilla. ANY player wakes the gate - on a multiplayer screen a
+            // friend walking up must light it for you too, so this cannot be keyed to the local player alone.
+            bool anyoneNear = false;
+            try
+            {
+                float wakeRange = Configuration.vfxWakeDistance != null ? Configuration.vfxWakeDistance.Value : 8f;
+                anyoneNear = Player.GetClosestPlayer(transform.position, Mathf.Max(2f, wakeRange)) != null;
+            }
+            catch
+            {
+                anyoneNear = true; // if the player list is unreadable, a lit portal is the safer failure
+            }
+
+            // Waking is brisk (the gate noticing you), going back to sleep is a slow exhale.
+            _wake = Mathf.MoveTowards(_wake, anyoneNear ? 1f : 0f, Time.deltaTime * (anyoneNear ? 1.7f : 0.7f));
+
+            bool show = _wake > 0.02f;
+            if (show != _shown) SetShown(show);
+            if (!show) return; // fully asleep: nothing moves, nothing emits, nothing renders
+
             // Charge decays on its own, so the effect settles back to idle the moment the player steps out
             // even if the trigger stops reporting (leaving the volume, dying, being teleported away).
             Charge = Mathf.Max(0f, Charge - Time.deltaTime * 1.4f);
 
-            float c = Mathf.Clamp01(Charge);
-            _spin += Time.deltaTime * (18f + 150f * c);
+            float c = Mathf.Clamp01(Charge) * _wake;
+            _spin += Time.deltaTime * (18f + 150f * c) * _wake;
 
             // Vertical rings counter-rotate; the ground sigil turns the other way again.
             if (_ringA != null) _ringA.transform.localRotation = Quaternion.Euler(0f, 0f, _spin);
@@ -296,33 +381,76 @@ namespace TortalPortal
             if (_sigilInner != null) _sigilInner.transform.localRotation = Quaternion.Euler(0f, _spin * 0.8f, 0f);
             if (_sigilRunes != null) _sigilRunes.transform.localRotation = Quaternion.Euler(0f, -_spin * 0.5f, 0f);
 
-            // The veil thickens as the gate charges - this is the visible feedback for the walk-in dwell.
+            // Every emitter is throttled by wake, so the gate spins up out of nothing and dies back to it.
             if (_veil != null)
             {
                 ParticleSystem.EmissionModule em = _veil.emission;
-                em.rateOverTime = 26f + 120f * c;
+                em.rateOverTime = (26f + 120f * c) * _wake;
                 ParticleSystem.MainModule main = _veil.main;
                 main.startColor = Colour * (1f + 1.6f * c);
             }
             if (_sigilRunes != null)
             {
                 ParticleSystem.EmissionModule em = _sigilRunes.emission;
-                em.rateOverTime = 14f + 50f * c;
+                em.rateOverTime = (14f + 50f * c) * _wake;
+            }
+            if (_motes != null)
+            {
+                ParticleSystem.EmissionModule em = _motes.emission;
+                em.rateOverTime = 10f * _wake;
+            }
+            if (_orbit != null)
+            {
+                ParticleSystem.EmissionModule em = _orbit.emission;
+                em.rateOverTime = (12f + 45f * c) * _wake;
             }
 
-            // Line widths breathe with the charge so the rings read as energised, not just spinning faster.
-            float w = 1f + 1.8f * c;
+            // Line widths breathe with the charge so the rings read as energised, not just spinning faster -
+            // and scale with wake so the rings condense out of the air instead of snapping on.
+            float w = (1f + 1.8f * c) * _wake;
             Width(_ringA, 0.055f * w); Width(_ringB, 0.04f * w);
             Width(_sigil, 0.07f * w); Width(_sigilInner, 0.05f * w);
             if (_spokes != null) foreach (LineRenderer s in _spokes) Width(s, 0.03f * w);
         }
 
+        // Renderers on or off wholesale - the dormant portal must COST nothing to look at as well as show
+        // nothing. Goes through SetVisible, the same switch the snapshot camera uses; if a snapshot restore
+        // flips a dormant portal's renderers back on, the next Update here flips them off again.
+        //
+        // Falling asleep also silences and clears every emitter: a hidden system keeps simulating at its
+        // last rate, and without this the wake-up would reveal a gate already full of stale runes instead
+        // of one spinning up from nothing.
+        private void SetShown(bool show)
+        {
+            _shown = show;
+            SetVisible(show);
+
+            if (!show)
+            {
+                Sleep(_veil);
+                Sleep(_motes);
+                Sleep(_sigilRunes);
+                Sleep(_orbit);
+            }
+        }
+
+        private static void Sleep(ParticleSystem ps)
+        {
+            if (ps == null) return;
+            ParticleSystem.EmissionModule em = ps.emission;
+            em.rateOverTime = 0f;
+            ps.Clear(true);
+        }
+
         // Fired the instant the gate takes the player - a hard flash so the trip has a punctuation mark.
         public void Discharge()
         {
+            _wake = 1f;
+            if (!_shown) SetShown(true);
             if (_veil != null) _veil.Emit(70);
             if (_motes != null) _motes.Emit(45);
             if (_sigilRunes != null) _sigilRunes.Emit(40);
+            if (_orbit != null) _orbit.Emit(30);
             Charge = 1f;
         }
 

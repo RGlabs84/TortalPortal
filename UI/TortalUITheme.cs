@@ -209,6 +209,17 @@ namespace TortalPortal
             GUI.DrawTexture(r, _selection);
         }
 
+        // The favorite mark: the frame's own lozenge, full-strength when starred and a ghost when not. One
+        // ornament doing double duty keeps the row furniture in the family - a text star would be at the
+        // mercy of whichever font the lookup found.
+        public static void DrawDiamondMark(Rect r, bool lit)
+        {
+            Color prev = GUI.color;
+            GUI.color = lit ? Color.white : new Color(1f, 1f, 1f, 0.22f);
+            GUI.DrawTexture(r, _diamond, ScaleMode.ScaleToFit);
+            GUI.color = prev;
+        }
+
         // A hairline with a lozenge set into the middle of it.
         public static void DrawRule(Rect r)
         {

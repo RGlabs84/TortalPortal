@@ -1,5 +1,37 @@
 # Changelog - TortalPortal
 
+## [1.1.0]
+
+### The map is now part of the interface
+- **Fixed:** Clicks on the destination window fell straight through it onto the map behind — toggling pins, starting drags, opening vanilla's pin-name box, and a middle-click through the window pinged the whole server. The window is IMGUI and the map is not, and the two input systems had never been introduced. While the cursor is over any of the mod's windows, the map's mouse handling now stands down entirely.
+- **Fixed:** The scroll wheel zoomed the map while it scrolled the portal list. It now does whichever one the cursor is actually over.
+- **Added:** **Click-n-go.** The portal markers on the great map are now live: click one to select that portal (exactly as if you had clicked its row), click the selected one again to travel. Double-clicking near a portal marker no longer opens vanilla's pin-name box in your face.
+
+### Favorites
+- **Added:** Every row in the destination list carries a small diamond — click it to star that portal. Favorites sort to the top of the list.
+- **Added:** The **favorites strip**: when you have favorites, the destination window opens as a slender list of just them, one click to travel, with an arrow (`»`) that expands to the full window and one (`«`) that folds it back. `OpenFavoritesView` (local, default on) controls whether it opens folded; PIN-locked favorites expand to the full window for the PIN rather than quick-launching.
+- Favorites are yours alone — stored on your machine, per world, keyed to the portal itself so renaming keeps the star. Nothing about them crosses the wire.
+
+### Riding through
+- **Added:** Teleport while mounted and your mount comes with you — you are lifted out of the saddle, the beast is sent through beside the exit, and once you land you are seated again automatically. The remount goes through the saddle's own request, so on a busy server the server still arbitrates the seat, and whatever rules the saddle enforces still apply.
+- Deliberately built against the game's mount interface rather than the vanilla saddle class, so **custom saddle items and modded mounts (OdinMounts and the like) ride through too**. Ships, carts and turrets are never dragged through — only a tamed creature qualifies.
+- **Added:** `AllowMountedTeleport` (server-synced, default on) turns the whole behaviour off for a server that wants dismount-and-walk.
+- **Added:** `TameFollowRadius` (server-synced, 2–30 m, default 10): how far around you following tames are collected when you travel — previously a hard-coded 10 m.
+
+### The gateway sleeps
+- **Changed:** The runic gateway is now **dormant until someone approaches**, like vanilla's unlit stone: no rings, no runes, no motes, and no rendering cost, until a player — any player, so a friend walking up lights it for you too — comes within `VFXWakeDistance` (local, 2–50 m, default 8). It condenses out of the air as you arrive and exhales back to nothing when everyone leaves.
+- **Added:** A fifth layer to the effect: **runes orbiting the whole portal**, circling outside the pillars the way vanilla's swirl did, so the gate reads as a portal from every side and not just through the doorway.
+
+### Map markers
+- **Changed:** The portal markers default to **TortalPortal's own rune pin** — a green glyph in a ring, generated at runtime like all of the mod's art. `PortalPinIcon` still offers vanilla's five icons, plus `Custom`: drop a `TortalPortalPin.png` beside the plugin DLL (ship it in a modpack to give a whole server one look) and the markers use it, falling back to the rune pin if the file is missing.
+
+### Interface
+- **Added:** `ShowDestinationPreviews` (local, default on). Turn it off and the destination window drops the photograph panel and narrows — snapshots are still captured and shared either way, so turning it back on costs nothing.
+- **Added:** `MenuCloseMargin` (local, 0–5 m, default 1): the extra distance beyond `MenuOpenDistance` you must retreat before an open window closes itself — the hysteresis that stops it strobing on the boundary, previously hard-coded.
+
+### Compatibility
+- Minimum required version stays at 1.0.1 — the portal index format is unchanged. The two new synced settings simply never reach an older client, which cannot ride a mount through anyway.
+
 ## [1.0.3]
 
 ### Interface

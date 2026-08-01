@@ -4,9 +4,11 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Assets](https://img.shields.io/badge/Assets-100%25_Procedural-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.0.3-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.1.0-lightgrey.svg)]()
 
 > *"The old way was to carve a name into the stone and hope another bore the same. A tally of runes, scratched and rescratched, and still you stepped through blind. Better to know the road before you walk it, Viking."*
+
+                       Join the Mists of Avalor Open BETA find it only on [Hexium](https://valheim.hexium.gg/mods/Wubarrk/Mists_of_Avalor_BETA)
 
 **TortalPortal** is a complete overhaul of Valheim's portal network. Vanilla's tag-pairing is gone — walk up to any portal and a framed window opens listing every portal in the world, with the great map beside it marking your chosen destination. Each portal keeps a photograph of where it comes out, so you can see the ground before you commit to it.
 
@@ -23,7 +25,12 @@ The list is built by the **server**, which is the only machine that holds the wh
 
 Every portal is **marked on the great map** while the window is open, labelled with its name, the one you have chosen drawn at twice the size — and the map centres clear of the window rather than behind it, so you are looking at the country around your destination instead of the back of a frame. The marks are never saved and vanish when the window closes; your own pins are your own business.
 
+The markers are **live**: click one to select that portal, click the chosen one again to travel — pick your destination off the country itself rather than out of a list. By default they carry TortalPortal's own rune pin, a green glyph in a ring; `PortalPinIcon` swaps in any of vanilla's five icons, or your own `TortalPortalPin.png` dropped beside the plugin.
+
 Walk away and the window closes itself. Arrive somewhere and it stays shut, so you are never greeted by a menu the instant you land — step off and walk back to bring it up again.
+
+### 🔱 Favorites
+Click the small diamond on any row to star that portal. Favorites sort to the top — and once you have some, the window opens as a **slender strip of just your favorites, one click to travel**, with an arrow that expands to the full list when you want the whole realm. The gates you use fifty times a day cost one click; everything else is one more. Favorites are stored on your own machine, per world, and renaming a portal keeps its star.
 
 ### 📸 See Exactly Where You Are Going
 Every portal quietly photographs its own destination when you raise it, on a wide-angle lens standing out in front of the gate, and stores the shot on the portal itself so **every player on the server sees it**. A background pass keeps the images current as the world changes around them, and portals that have never been photographed — every gate on a world that predates the mod — are shot first, so an established server fills its album in as people move about it.
@@ -40,14 +47,18 @@ If the text is too small or too large for your display, `UITextScale` moves it b
 ### 🔒 Lock Your Gates
 Walk up to a portal you built and press `E` to open its configuration panel: set its name and toggle a PIN lock in one place. Anyone else selecting that destination must enter the PIN before the gate will take them.
 
-### 🐺 Bring the Pack
-Your loyal companions travel with you. Any tamed creature following you or standing nearby steps through at your side.
+### 🐺 Bring the Pack — and Ride It Through
+Your loyal companions travel with you. Any tamed creature following you steps through at your side (`TameFollowRadius` sets how wide a circle is gathered).
+
+**Riding? Stay in the saddle.** Teleport while mounted and the beast comes with you — you are lifted out of the saddle for the trip, it is sent through beside the exit, and you are seated again the moment you land. Built against the game's mount interface rather than any one saddle, so custom saddle items and modded mounts (OdinMounts and friends) ride through exactly like a Lox. Ships and carts stay where you left them; only a tamed creature qualifies.
 
 ### 🚧 Decide What Travels
 Admins get a dual filtering system beyond vanilla's flat metal ban. Populate the **whitelist** to create an exclusive "these may pass" list, and use the **blacklist** to further restrict specific items — or switch the whole thing to `BypassAll` and let everything through. All of it is server-synced, so the rules are the server's, not each client's.
 
 ### ✨ The Runic Gateway
-Vanilla's portal particles are replaced by a green runic gateway: a veil of drifting Elder Futhark glyphs filling the doorway, two counter-rotating rune circles standing in the gap, a magic circle scribed across the threshold, and slow embers rising through the whole site. It brightens and spins up as you step in.
+Vanilla's portal particles are replaced by a green runic gateway: a veil of drifting Elder Futhark glyphs filling the doorway, two counter-rotating rune circles standing in the gap, a magic circle scribed across the threshold, runes orbiting the whole structure the way vanilla's swirl did, and slow embers rising through the whole site. It brightens and spins up as you step in.
+
+**And it sleeps.** Like vanilla's unlit stone, the gateway sits fully dormant — nothing drawn, nothing simulated — until a player comes within `VFXWakeDistance`, then condenses out of the air as you approach and exhales back to nothing when everyone leaves. Any player wakes it, so a friend walking up lights the gate for you too.
 
 The gateway **measures each portal's own arch and centres itself in it**, so wood, stone and black marble portals all read correctly — and so will any portal a future update or another mod adds.
 
@@ -60,7 +71,9 @@ A built-in bypass lets admins ignore PIN locks, item filters and portal placemen
 
 - **Place a portal** — the game snaps a hidden high-resolution photo of its destination for the preview system.
 - **Configure it** — walk up and press `E`. Set its name and toggle a PIN lock.
-- **Travel** — walk into the portal's range. Pick a destination from the list; the big map marks it, and clicking its picture shows you the place full screen. Hit **Teleport**.
+- **Travel** — walk into the portal's range. Pick a destination from the list — or click its marker on the map, and click it again to go. The picture opens full screen if you want a look first. Hit **Teleport**.
+- **Favorites** — the diamond on a row stars it. With favorites set, the window opens as a one-click launcher strip; `»` expands to the full list.
+- **Riding** — stay in the saddle and hit Teleport; you and the mount arrive together and you are re-seated automatically.
 - **On arrival** — the menu stays shut so you can get on with it. Step away and walk back to bring it up again.
 - **Typing** — the destination window focuses its filter box as it opens, so you can just start typing a name. While any of the mod's fields has the keyboard your character stands still and hotkeys hold their peace. `Escape` hands it back without closing the window.
 
@@ -81,6 +94,8 @@ Settings live in `wubarrk.TortalPortal.cfg`.
 | `MaxPortalsPerPlayer` | Limit how many portals each player can construct. **Unlimited by default** — `0` or any negative number means no cap at all. Set a positive number to enforce one. |
 | `AdminBypass` | Lets admins ignore portal limits, PIN locks and item filters. |
 | `AllowTames` | Whether tamed creatures follow you through. |
+| `TameFollowRadius` | `2`–`30` metres, default `10`. How far around you following tames are gathered when you travel. |
+| `AllowMountedTeleport` | Default on. Teleporting while riding brings the mount and re-seats you on arrival — vanilla saddles, custom saddle items and modded mounts alike. Off means dismount and walk through. |
 | `MenuOpenDistance` | `1`–`10` metres, default `2.5`. How close you must be before the destination window opens by itself. Vanilla's portal range is 5 m, which puts it in your face while you are still walking up. The portal's glow and connection effect keep their own range regardless. |
 | `EnableCustomVFX` | Replaces vanilla portal particles with the runic gateway. |
 | `EnablePortalCameraShot` | Whether placing a portal captures a preview snapshot. |
@@ -91,11 +106,19 @@ Settings live in `wubarrk.TortalPortal.cfg`.
 | Setting | What it does |
 | :--- | :--- |
 | `UITextScale` | `0.6`–`2.0`. Scales all portal UI text and the layout around it. Applies immediately, no restart. |
+| `UIFontSizeDelta` | `-6`–`+12` points added flat to every text size, after the scale. Defaults to `+2` to match Fatty, which shares this theme. |
+| `MenuCloseMargin` | `0`–`5` metres, default `1`. How much further out than `MenuOpenDistance` you must retreat before an open window closes itself — the hysteresis that stops it strobing on the boundary. |
+| `ShowDestinationPreviews` | Default on. Off drops the photograph panel and narrows the window. Snapshots are still captured and shared either way. |
+| `OpenFavoritesView` | Default on. When you have favorites, the window opens as the slim favorites strip; the `»` arrow expands it regardless. |
 | `VFXOrbHeightOffset` | Metres to nudge the rune orb up or down inside the gate. The orb auto-centres on each portal's arch, so this is only for fine-tuning. |
+| `VFXWakeDistance` | `2`–`50` metres, default `8`. How close a player must be before the dormant gateway wakes. |
 | `ShowPortalPinsOnMap` | Default on. Marks every listed portal on the large map while the destination window is open. Never saved, removed when the window closes. |
-| `PortalPinIcon` | Which of vanilla's five map-pin icons the markers use. Default `Icon4`. |
+| `PortalPinIcon` | Default `Rune` — TortalPortal's own glyph-in-a-ring. Also vanilla's five icons, or `Custom` to use a `TortalPortalPin.png` placed beside the plugin DLL (falls back to `Rune` if missing). |
 | `EnableDebugLogging` | Verbose logging for UI and teleport events. |
 
 ---
 
 > ⚠️ **Dependencies:** BepInEx
+
+---
+

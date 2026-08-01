@@ -106,9 +106,9 @@ namespace TortalPortal
                 {
                     float openRange = Mathf.Min(Configuration.menuOpenDistance.Value, __instance.m_activationRange);
                     // A little further out to close than to open, so hovering on the boundary does not
-                    // strobe the window.
+                    // strobe the window. How much further is MenuCloseMargin.
                     float range = PortalUIManager.IsUIVisible() && PortalUIManager.CurrentSourcePortal == __instance
-                        ? openRange + 1f
+                        ? openRange + Mathf.Max(0f, Configuration.menuCloseMargin.Value)
                         : openRange;
 
                     localPlayerInRange = Vector3.Distance(local.transform.position, gate) <= range;
