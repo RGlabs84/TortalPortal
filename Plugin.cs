@@ -18,6 +18,7 @@ namespace TortalPortal
         {
             typeof(PlacementPatch),
             typeof(SnapshotAnchor),
+            typeof(SectorSubscription),
             typeof(FilterPatch),
             typeof(PortalBehaviorPatch),
             typeof(SecurityPatch),

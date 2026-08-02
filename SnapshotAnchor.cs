@@ -29,8 +29,9 @@ namespace TortalPortal
     {
         // 1 ring = a 3x3 block of zones, 192m across. Vanilla's active area is wider, but the shot is
         // taken at eye level two metres from the gate and the fog curtains off the edge long before 96m,
-        // so the wider block would cost load time and buy nothing visible.
-        private const int AnchorRing = 1;
+        // so the wider block would cost load time and buy nothing visible. Public because the server's
+        // SectorSubscription must send exactly the sectors this class will try to instantiate.
+        public const int AnchorRing = 1;
 
         private static bool _active;
         private static Vector3 _position;
