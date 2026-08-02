@@ -22,15 +22,19 @@ namespace TortalPortal
     {
         private enum Phase { Idle, Acquiring, Live }
 
-        // How long the album may go silent before the feed is torn down. OnGUI draws every frame the
-        // album is up, so anything past a couple of frames means "nobody is watching any more".
-        private const float DeadmanSeconds = 0.5f;
+        // How many RENDERED FRAMES the album may go silent before the feed is torn down. Frames, not
+        // seconds, deliberately: the anchor's own zone loading hitches the client, and during a hitch
+        // neither the album's ticks NOR the frame counter advance - so a stall cannot kill the feed. A
+        // wall-clock deadman could and did: hitch > deadline, teardown, zones unload, restart, zones
+        // reload, hitch again - heavy destinations looped forever and never went live. A genuinely
+        // closed album keeps rendering frames without ticking, and three of them (~50ms) end the feed.
+        private const int DeadmanFrames = 3;
 
         private static Phase _phase = Phase.Idle;
         private static ZDOID _id = ZDOID.None;
         private static Vector3 _pos;
         private static Quaternion _rot;
-        private static float _lastTickAt;
+        private static int _lastTickFrame;
         private static float _startedAt;
         private static Coroutine _routine;
         private static Camera _cam;
@@ -52,7 +56,7 @@ namespace TortalPortal
                 if (!Configuration.remoteSnapshots.Value || !Configuration.livePreviews.Value) return;
                 if (Plugin.Instance == null) return;
 
-                _lastTickAt = Time.realtimeSinceStartup;
+                _lastTickFrame = Time.frameCount;
                 if (_phase != Phase.Idle && id == _id) return;
 
                 Stop(); // switching portals mid-album, or first open
@@ -105,7 +109,7 @@ namespace TortalPortal
                 while (true)
                 {
                     // The deadman and the world checks come before anything else, every lap.
-                    if (Time.realtimeSinceStartup - _lastTickAt > DeadmanSeconds) yield break;
+                    if (Time.frameCount - _lastTickFrame > DeadmanFrames) yield break;
                     if (ZNetScene.instance == null || ZoneSystem.instance == null || Player.m_localPlayer == null) yield break;
                     if (!Configuration.remoteSnapshots.Value || !Configuration.livePreviews.Value) yield break;
 
@@ -147,7 +151,11 @@ namespace TortalPortal
                         bool budgetSpent = Time.realtimeSinceStartup - _startedAt > Configuration.AnchorTimeoutSafe;
                         if (ready || budgetSpent)
                         {
-                            if (StartCamera()) _phase = Phase.Live;
+                            if (StartCamera())
+                            {
+                                _phase = Phase.Live;
+                                Plugin.Log.LogInfo($"TortalPortal: live preview went live at ({_pos.x:0},{_pos.z:0}) after {Time.realtimeSinceStartup - _startedAt:0.0}s{(ready ? "" : " (settle budget spent - scene finishes loading on screen)")}.");
+                            }
                             else yield break; // camera could not be built; the still stands in
                         }
                     }
