@@ -1180,10 +1180,19 @@ namespace TortalPortal
 
             TortalUITheme.DrawFill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0f, 0f, 0f, 0.86f));
 
+            // The live feed rides the album. Ticking on every drawn frame is what keeps it alive - any
+            // way of leaving this screen stops the ticks and the feed shuts itself down within half a
+            // second (see LivePreview's deadman). Until the destination has streamed in, live is null and
+            // the stored photograph stands in.
+            LivePreview.Tick(_selected.Id, _selected.Pos, _selected.Rot);
+            Texture live = LivePreview.CurrentTexture(_selected.Id);
+
             // A snapshot still on its way from the server (mid-cycle) gets a 16:9 frame to arrive into.
-            float aspect = _previewTex != null && _previewTex.height > 0
-                ? _previewTex.width / (float)_previewTex.height
-                : 16f / 9f;
+            float aspect = live != null && live.height > 0
+                ? live.width / (float)live.height
+                : _previewTex != null && _previewTex.height > 0
+                    ? _previewTex.width / (float)_previewTex.height
+                    : 16f / 9f;
             float chromeW = 2f * (TortalUITheme.Band + TortalUITheme.Pad);
             float chromeH = 2f * TortalUITheme.Band + TortalUITheme.TitleHeight + TortalUITheme.FooterHeight;
 
@@ -1203,7 +1212,29 @@ namespace TortalPortal
 
             // Body() is exactly the image rect - the window was built around it.
             Rect body = TortalUITheme.Body(win);
-            if (_previewTex != null)
+
+            // Steering the live camera: right-drag looks around, the wheel zooms. Right button on purpose
+            // - IMGUI buttons only answer the left, so steering can never collide with click-to-close, and
+            // the wheel is dead air in this screen anyway. Both consumed so nothing leaks to the map.
+            if (live != null && ev != null && body.Contains(ev.mousePosition))
+            {
+                if (ev.type == EventType.MouseDrag && ev.button == 1)
+                {
+                    LivePreview.AddLook(ev.delta.x, ev.delta.y);
+                    ev.Use();
+                }
+                else if (ev.type == EventType.ScrollWheel)
+                {
+                    LivePreview.AddZoom(ev.delta.y);
+                    ev.Use();
+                }
+            }
+
+            if (live != null)
+            {
+                GUI.DrawTexture(body, live, ScaleMode.ScaleToFit);
+            }
+            else if (_previewTex != null)
             {
                 GUI.DrawTexture(body, _previewTex, ScaleMode.ScaleToFit);
             }
@@ -1217,9 +1248,14 @@ namespace TortalPortal
             }
             TortalUITheme.DrawOutline(body, new Color(TortalUITheme.Gold.r, TortalUITheme.Gold.g, TortalUITheme.Gold.b, 0.8f), 1f);
 
+            // The footer says what the eye is looking at: a live destination, a feed still warming (the
+            // far world streaming in behind the stored still), or just the photograph.
+            string feedState = live != null ? "LIVE   ·   right-drag to look, wheel to zoom"
+                : LivePreview.Active ? "going live..."
+                : "photograph";
             GUI.Label(TortalUITheme.FooterLine(win),
                       $"{PrettyBiome(_selected.Biome)}   ·   {(int)_selected.Pos.x}, {(int)_selected.Pos.y}, {(int)_selected.Pos.z}" +
-                      "   ·   arrows flip through portals   ·   click anywhere to close",
+                      $"   ·   {feedState}   ·   arrows flip through portals   ·   click anywhere to close",
                       TortalUITheme.Footer);
 
             // The page-turn arrows, parked in the side gutters outside the frame.
@@ -1352,6 +1388,11 @@ namespace TortalPortal
 
         private void ClearPreview()
         {
+            // Every path that drops or swaps the picture also ends any live feed - the deadman would
+            // catch it half a second later anyway, but stopping here frees the anchor for the background
+            // walk immediately.
+            LivePreview.Stop();
+
             if (_previewTex == null) return;
             Destroy(_previewTex);
             _previewTex = null;

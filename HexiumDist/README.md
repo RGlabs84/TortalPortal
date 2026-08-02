@@ -4,7 +4,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Assets](https://img.shields.io/badge/Assets-100%25_Procedural-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.1.2-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.2.0-lightgrey.svg)]()
 
 > *"The old way was to carve a name into the stone and hope another bore the same. A tally of runes, scratched and rescratched, and still you stepped through blind. Better to know the road before you walk it, Viking."*
 
@@ -36,6 +36,11 @@ Click the small heart on any row - it turns gold: starred. Favorites sort to the
 Every portal quietly photographs its own destination when you raise it, on a wide-angle lens standing out in front of the gate, and stores the shot on the portal itself so **every player on the server sees it**. A background pass keeps the images current as the world changes around them, and portals that have never been photographed — every gate on a world that predates the mod — are shot first, so an established server fills its album in as people move about it.
 
 The list shows each shot as a thumbnail — and **clicking it opens the photograph full screen** at your resolution, the portal's name across the top, captioned with the biome and coordinates. Arrows on either side (or the keyboard's arrow keys) **flip through every portal's picture like an album** without leaving the frame. Read the terrain, spot the tar pit, notice the Fuling camp, *then* decide.
+
+**No portal waits for a visitor.** Valheim only builds the world around players, so a gate nobody has stepped near could never be photographed — until now. The camera quietly *anchors* one unphotographed portal at a time, streams in a small patch of world around it out where nobody is, waits for the terrain to genuinely finish, takes the shot, and lets it all unload seconds later. Works on hosted worlds and dedicated servers alike; an established server fills its whole album on its own, horizon and all.
+
+### 🔮 Watch Through the Gate
+Open a portal's picture full-size and the photograph gives way to a **live view of the destination** — real weather, real time of day, swaying trees, rendered by your own game through the same anchor the camera uses. **Right-drag looks around, the wheel zooms** (30°–100°). The still stands in while the far world streams in (`going live...` in the footer, then `LIVE`), and closing the album unloads everything within seconds — the feed's lifecycle is a deadman switch, so there is no exit path that leaves a camera running.
 
 ### 🖼️ A Frame Worth Looking At
 Both portal windows are set in an ornate gilt frame: polished double rails, acanthus scrollwork mitring every corner, and a palmette crest struck into the top and bottom edges. It is drawn on a dark leather panel with gold-edged insets, and the destination list reads as a proper set of cards rather than a wall of text.
@@ -83,6 +88,17 @@ A built-in bypass lets admins ignore PIN locks, item filters and portal placemen
 
 ---
 
+## 🌱 Seeding a World
+
+Two console commands ship with the mod — the same ones every 1.2.0 feature was shaken down with. Both are cheat commands: enable `devcommands` in the console first, which on a server means being on its adminlist.
+
+- **`tortal_scatter [count] [radius]`** — raises portals at random spots across the world. Default 25 within 2 000 m; up to 500 at a time, radius up to 10 000 m. Spots are spread evenly across the disc rather than crowding the middle, each gate is named for its biome and registered in the index like any hand-built portal, and every 5th one is PIN-locked with `1234` so locks have test subjects too.
+- **`tortal_scatterclear`** — removes every portal `tortal_scatter` raised and *nothing else*: scattered gates carry a marker, hand-built portals are never touched. Run from a client it sweeps what is loaded around you **and** asks the server to sweep the whole world (admin-gated), reporting the total back to your console.
+
+Together with remote snapshots this is a **world-seeding tool**: scatter a network across the map on day one — `tortal_scatter 100 10000` covers the whole world — and the camera walks it on its own, portal by portal, until the server opens with a fully photographed network no player has ever visited. Keep the gates, or `tortal_scatterclear` when you have placed your own.
+
+---
+
 ## ⚙️ Configuration
 
 Settings live in `wubarrk.TortalPortal.cfg`.
@@ -104,6 +120,12 @@ Settings live in `wubarrk.TortalPortal.cfg`.
 | `EnableCustomVFX` | Replaces vanilla portal particles with the runic gateway. |
 | `EnablePortalCameraShot` | Whether placing a portal captures a preview snapshot. |
 | `SnapshotRefreshIntervalMinutes` | Default `5`. How often already-photographed portals are re-shot, so a rebuilt or burnt-out destination stops showing the old view. `0` disables refreshes; portals with no picture are still filled in regardless. |
+| `EnableRemoteSnapshots` | Default on. The camera walks the world on its own: portals nobody is near are briefly anchored, photographed and unloaded again — including over a dedicated server. Off means only portals loaded around players are photographed, as before 1.2.0. |
+| `EnableLivePreviews` | Default on. Opening a photograph full-size streams a live view of the destination. Off means the album shows stills only. |
+| `CameraResolution` | Dropdown: `Res480p` / `Res720p` (default) / `Res900p` / `Res1080p`. What the portal camera renders at — stored snapshots and live feed both. Stored pictures travel to every player, so higher resolutions cost real bandwidth; existing photographs keep the size they were taken at. |
+| `AnchorZoneRing` | `1`–`2`, default `1`. How much world a far shot loads: 1 = 3×3 zones (192 m), 2 = 5×5 (320 m). Hard-capped at 2 — a wider ring is a guaranteed hitch on any hardware. |
+| `AnchorSettleBudgetSeconds` | `10`–`120`, default `40`. How long a far shot may wait for the destination to settle before the attempt is skipped and retried a later lap. Also where the live preview stops waiting for perfection and goes live with what is standing. |
+| `AnchorSettleRadius` | `30`–`300` m, default `100`. How far around the portal terrain must be finished rebuilding before a scene counts as settled. |
 | `PortalIndexRefreshSeconds` | `5`–`300`. How often the server rescans the world and republishes the destination list — how quickly a new portal, rename or demolition reaches everyone. Only sent when something actually changed. |
 
 ### Local to your game (not synced — set these however you like)

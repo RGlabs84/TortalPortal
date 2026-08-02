@@ -17,6 +17,10 @@ namespace TortalPortal
             try
             {
                 PortalRegistry.OnZNetStart();
+                // Before the dedicated-server bail-out below: the RPC handlers are precisely the part a
+                // dedicated server DOES run.
+                SectorSubscription.OnZNetStart();
+                ScatterCommand.OnZNetStart();
                 InitializeBackgroundSnapshot();
             }
             catch (Exception ex)
@@ -173,15 +177,28 @@ namespace TortalPortal
             TakeSnapshotCore(portalTransform);
         }
 
-        // How often the backfill looks around for a portal that has never been photographed. 12.5s rather than
-        // the original 15s - a 20% faster shutter, asked for because a world full of unphotographed portals
-        // takes a long time to fill in.
+        // How often the backfill looks around for a portal that has never been photographed. Has come down
+        // twice by request: 15s originally, 12.5s in 1.1.2, and 10.5s now - a further ~16% - because with
+        // the anchor walking the far portals the whole world fills at this cadence, not just the cluster
+        // around the player.
         //
-        // Worth knowing what this does NOT fix: only portals whose instance is actually spawned around the
-        // player can be photographed at all (CollectLoadedPortals), so a portal on the far side of the map
-        // waits for somebody to walk near it no matter how fast this ticks. Turning the interval down helps
-        // a cluster of portals you are standing among; it cannot help one nobody has visited.
-        private const float BackfillScanSeconds = 12.5f;
+        // Two kinds of portal get filled in per tick: the ones spawned around this player (the ordinary
+        // pass, CollectLoadedPortals), and ONE portal nobody is near, loaded briefly through SnapshotAnchor,
+        // photographed and unloaded again - from local memory on the hosting player, over a
+        // SectorSubscription on a client of a dedicated server.
+        private const float BackfillScanSeconds = 10.5f;
+
+        // The settle budget and rebuild-check radius are synced dials now (AnchorSettleBudgetSeconds,
+        // AnchorSettleRadius), read through Configuration's NaN-proof clamped accessors at each use - a
+        // dial can change mid-session and the next attempt honours it.
+        //
+        // The area is considered settled when, this many consecutive polls (at 0.25s each), the sector
+        // holds a stable number of ZDOs, every one of them has an instance, and no heightmap nearby has a
+        // rebuild queued. IsAreaReady alone lied on dedicated servers: it judges only the ZDOs that have
+        // ARRIVED so far, so early in the stream a half-empty area reads as complete - which is exactly
+        // what the half-loaded pictures were. Stability catches in-flight arrivals; the heightmap check
+        // catches terrain edits (TerrainComp) that landed but have not rebuilt their mesh yet.
+        private const int AnchorSettledPolls = 6;
 
         private static Coroutine _snapshotRoutine;
 
@@ -193,7 +210,12 @@ namespace TortalPortal
             if (ZNet.instance == null || ZNet.instance.IsDedicated()) return;
 
             // ZNet.Start runs again on every world load; these coroutines live on the plugin object, which
-            // does not get torn down with the world.
+            // does not get torn down with the world - as does every scrap of static state below, so a
+            // give-up on one server must not carry into the next world, nor a stopped routine's anchor.
+            SnapshotAnchor.Clear();
+            _farShotsGivenUp = false;
+            _farShotTimeouts = 0;
+
             if (_snapshotRoutine != null) Plugin.Instance.StopCoroutine(_snapshotRoutine);
             _snapshotRoutine = Plugin.Instance.StartCoroutine(BackgroundSnapshotRoutine());
         }
@@ -217,6 +239,33 @@ namespace TortalPortal
                 // them, so between everyone playing the network completes itself.
                 yield return Plugin.Instance.StartCoroutine(SnapshotLoadedPortals(missingOnly: true, max: 2));
 
+                // Then the portals nobody is walking near - the camera walking the world on its own, one
+                // portal per tick. Skipped mid-teleport because the player's own active area is not loaded
+                // then, and ZNetScene refuses to create objects until it is.
+                // The live preview holds the same single anchor the walk uses; while a player is actually
+                // watching a destination, the background camera waits its turn.
+                if (Configuration.remoteSnapshots.Value && !Player.m_localPlayer.IsTeleporting() &&
+                    ZNet.instance != null && !LivePreview.Active)
+                {
+                    if (ZNet.instance.IsServer())
+                    {
+                        // The hosting player holds the whole world's ZDOs, so candidates come straight out
+                        // of local memory and the anchor loads from disk.
+                        ZDO remote = FindRemoteUnphotographedPortal();
+                        if (remote != null)
+                        {
+                            yield return Plugin.Instance.StartCoroutine(SnapshotAnchoredPortal(remote));
+                        }
+                    }
+                    else if (!_farShotsGivenUp)
+                    {
+                        // A client of a dedicated server holds almost nothing, but it does hold the portal
+                        // INDEX. Candidates come from there, the portal's own ZDO is pulled with vanilla's
+                        // RequestZDO, and the world around it arrives through SectorSubscription.
+                        yield return Plugin.Instance.StartCoroutine(ClientFarShotRoutine());
+                    }
+                }
+
                 int interval = Configuration.snapshotRefreshIntervalMinutes.Value;
                 if (interval > 0 && Time.realtimeSinceStartup >= nextRefresh)
                 {
@@ -234,6 +283,227 @@ namespace TortalPortal
                 if (portal == null) continue;
                 yield return TakeSnapshotRoutine(portal.transform);
             }
+        }
+
+        // Round-robin cursor over the unphotographed far portals, so one that keeps timing out (a portal
+        // buried in an enormous base, say) delays the others once per lap instead of starving them forever.
+        private static int _remoteCursor;
+
+        private static ZDO FindRemoteUnphotographedPortal()
+        {
+            try
+            {
+                List<ZDO> candidates = new List<ZDO>();
+                foreach (ZDO zdo in GetAllPortals())
+                {
+                    if (zdo == null || !zdo.IsValid()) continue;
+
+                    byte[] existing = zdo.GetByteArray("PortalSnapshot");
+                    if (existing != null && existing.Length > 0) continue;
+
+                    // A portal that is already spawned belongs to the ordinary pass - anchoring it would
+                    // just photograph it a tick later than CollectLoadedPortals will anyway.
+                    if (ZNetScene.instance.FindInstance(zdo) != null) continue;
+
+                    candidates.Add(zdo);
+                }
+                if (candidates.Count == 0) return null;
+                return candidates[_remoteCursor++ % candidates.Count];
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: scanning for far portals to photograph failed (non-fatal). Reason: {ex}");
+                return null;
+            }
+        }
+
+        // ---- the client edition, for dedicated servers -----------------------------------------------------
+
+        // Portals closer than this are the walk-near pass's business - and inside roughly this range the
+        // anchor's overlap guards would refuse to double-load them anyway. A little beyond the active area
+        // (2 zones = 128m) plus the anchor ring.
+        private const float FarShotMinDistanceMeters = 250f;
+
+        // A shoot that ends with no world ever arriving most likely means the server does not know the
+        // subscription RPC - it is running a pre-1.2 TortalPortal, and every further attempt would burn a
+        // full timeout to learn nothing. Three strikes and the client stops for the session. Set back to
+        // false on every world load, so updating the server needs no client-side ceremony. Note the flag
+        // tracks the world ARRIVING, not the shot landing: an area that arrived but needed longer to
+        // settle than the budget is a retry, not a strike.
+        private static int _farShotTimeouts;
+        private static bool _farShotsGivenUp;
+        private static bool _lastAnchorReceivedWorld;
+        private static int _registryCursor;
+
+        private static IEnumerator ClientFarShotRoutine()
+        {
+            // One candidate considered per tick, round-robin over the index the server already pushes to
+            // every client for the destination list. No new wire format, nothing to version.
+            PortalRegistry.Entry pick = null;
+            List<PortalRegistry.Entry> entries = PortalRegistry.GetEntries();
+            if (entries.Count == 0 || Player.m_localPlayer == null || ZDOMan.instance == null) yield break;
+
+            Vector3 here = Player.m_localPlayer.transform.position;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                PortalRegistry.Entry cand = entries[_registryCursor++ % entries.Count];
+                if (Vector3.Distance(cand.Pos, here) < FarShotMinDistanceMeters) continue;
+                pick = cand;
+                break;
+            }
+            if (pick == null)
+            {
+                Configuration.LogDebug("far pass: every portal in the index is within walking range - nothing for the anchor to do.");
+                yield break;
+            }
+
+            // The index row says where the portal is; whether it already has its photograph lives on the
+            // portal's own ZDO, which this client is not holding. Vanilla's RequestZDO pulls exactly one -
+            // the same call the destination window already uses for far snapshots - so the expensive
+            // anchor only ever spins up for a portal that genuinely has no picture.
+            ZDO zdo = ZDOMan.instance.GetZDO(pick.Id);
+            if (zdo == null)
+            {
+                ZDOMan.instance.RequestZDO(pick.Id);
+                float deadline = Time.realtimeSinceStartup + 6f;
+                while (zdo == null && Time.realtimeSinceStartup < deadline)
+                {
+                    yield return new WaitForSeconds(0.25f);
+                    if (ZDOMan.instance == null) yield break;
+                    zdo = ZDOMan.instance.GetZDO(pick.Id);
+                }
+            }
+            // Never arriving is a stale index row (demolished portal) or a server too old to answer -
+            // either way not worth a strike; the cursor has already moved on.
+            if (zdo == null || !zdo.IsValid())
+            {
+                Configuration.LogDebug($"far pass: portal '{pick.Tag}' never arrived from the server (stale index row?); moving on.");
+                yield break;
+            }
+
+            byte[] existing = zdo.GetByteArray("PortalSnapshot");
+            if (existing != null && existing.Length > 0)
+            {
+                Configuration.LogDebug($"far pass: '{pick.Tag}' already photographed; moving on.");
+                yield break;
+            }
+
+            yield return Plugin.Instance.StartCoroutine(SnapshotAnchoredPortal(zdo));
+
+            if (_lastAnchorReceivedWorld)
+            {
+                _farShotTimeouts = 0;
+            }
+            else if (++_farShotTimeouts >= 3)
+            {
+                _farShotsGivenUp = true;
+                Plugin.Log.LogWarning(
+                    "TortalPortal: three far-portal shoots in a row never received their world from the server. " +
+                    "It is most likely running a TortalPortal older than 1.2.0, which does not know the sector " +
+                    "subscription - far portals will fill in when players walk near them, exactly as before. " +
+                    "No further attempts this session.");
+            }
+        }
+
+        private static IEnumerator SnapshotAnchoredPortal(ZDO zdo)
+        {
+            Vector3 pos = zdo.GetPosition();
+            // On a client the world around the anchor is not on disk - it has to be ASKED for, and kept
+            // asked for: the server-side subscription is renewal-driven so a crashed client costs nothing.
+            bool viaServer = ZNet.instance != null && !ZNet.instance.IsServer();
+
+            // One line per attempt and one per outcome, at Info on purpose: the whole feature is invisible
+            // work far from any player, and a silent success is indistinguishable from a pass that never
+            // ran - which has already cost a debugging session.
+            float started = Time.realtimeSinceStartup;
+            Plugin.Log.LogInfo($"TortalPortal: far pass: anchoring '{zdo.GetString(ZDOVars.s_tag)}' at ({pos.x:0},{pos.z:0}){(viaServer ? " via sector subscription" : " from local memory")}.");
+
+            _lastAnchorReceivedWorld = false;
+            SnapshotAnchor.Set(pos);
+            // try/finally (no catch - the iterator rule) so the anchor NEVER outlives this routine: an
+            // anchor left standing would keep a patch of far-off world loaded for the rest of the session.
+            try
+            {
+                if (viaServer) SectorSubscription.Renew(pos);
+                float nextRenew = Time.realtimeSinceStartup + SectorSubscription.RenewSeconds;
+
+                float budget = Configuration.AnchorTimeoutSafe;
+                int settledStreak = 0;
+                int lastZdoCount = -1;
+                float deadline = Time.realtimeSinceStartup + budget;
+                while (Time.realtimeSinceStartup < deadline)
+                {
+                    if (ZNetScene.instance == null || ZoneSystem.instance == null || Player.m_localPlayer == null)
+                    {
+                        yield break; // world unloading; finally drops the anchor
+                    }
+
+                    SnapshotAnchor.PokeZones();
+                    if (viaServer && Time.realtimeSinceStartup >= nextRenew)
+                    {
+                        SectorSubscription.Renew(pos);
+                        nextRenew = Time.realtimeSinceStartup + SectorSubscription.RenewSeconds;
+                    }
+
+                    // Settled = vanilla's readiness (zone built, every KNOWN near ZDO instanced), no
+                    // heightmap rebuild pending, and no new ZDOs arrived since the last poll - held for
+                    // AnchorSettledPolls in a row, because on a dedicated server the ZDOs trickle in and
+                    // any single poll can catch a lull mid-stream.
+                    int zdoCount = CountAnchorSectorZdos(pos);
+                    bool ready = zdoCount > 0 &&
+                                 zdoCount == lastZdoCount &&
+                                 ZNetScene.instance.IsAreaReady(pos) &&
+                                 !Heightmap.HaveQueuedRebuild(pos, Configuration.AnchorSettleRadiusSafe) &&
+                                 SnapshotAnchor.DistantTerrainReady;
+                    lastZdoCount = zdoCount;
+
+                    settledStreak = ready ? settledStreak + 1 : 0;
+                    if (settledStreak >= AnchorSettledPolls) break;
+
+                    yield return new WaitForSeconds(0.25f);
+                }
+                bool settled = settledStreak >= AnchorSettledPolls;
+
+                ZNetView nview = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(zdo) : null;
+                TeleportWorld tw = (nview != null && nview.IsValid()) ? nview.GetComponent<TeleportWorld>() : null;
+
+                // The portal instance existing proves the world DID arrive - which is what separates "this
+                // server is too old to answer" (strikes toward giving up) from "a big area needed longer
+                // than the budget" (just try again later).
+                _lastAnchorReceivedWorld = tw != null;
+
+                if (tw != null && settled)
+                {
+                    yield return TakeSnapshotRoutine(tw.transform);
+                    Plugin.Log.LogInfo($"TortalPortal: far pass: photographed '{zdo.GetString(ZDOVars.s_tag)}' after {Time.realtimeSinceStartup - started:0.0}s.");
+                }
+                else if (tw != null)
+                {
+                    // Never shoot a half-loaded scene. A missing photograph heals itself on a later lap; a
+                    // photograph of missing terrain and bald ground is worse than none and - because the
+                    // backfill only chases portals with NO picture - would stand forever.
+                    Plugin.Log.LogInfo($"TortalPortal: far portal at {pos} arrived but had not settled within {budget:0}s (still streaming or terrain still building); skipping the shot rather than storing a half-loaded picture.");
+                }
+                else
+                {
+                    Plugin.Log.LogInfo($"TortalPortal: far portal at {pos} did not stream in within {budget:0}s; will try it again next lap.");
+                }
+            }
+            finally
+            {
+                SnapshotAnchor.Clear();
+                if (viaServer) SectorSubscription.Release();
+            }
+        }
+
+        private static readonly List<ZDO> _anchorCountTemp = new List<ZDO>();
+
+        private static int CountAnchorSectorZdos(Vector3 pos)
+        {
+            if (ZDOMan.instance == null) return 0;
+            _anchorCountTemp.Clear();
+            ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(pos), SnapshotAnchor.Ring, 0, _anchorCountTemp);
+            return _anchorCountTemp.Count;
         }
 
         // Only portals whose instance is spawned around this player can be photographed, and on a client
@@ -274,13 +544,21 @@ namespace TortalPortal
         // the arch, so every preview was the gate itself with the rune VFX blazing across the middle of it and
         // the actual destination hidden behind. Standing it out in front looking away puts the portal, and
         // everything we draw inside it, behind the camera entirely.
-        private const float CameraForwardOffset = 2.0f;   // metres out the front of the gate
-        private const float CameraHeight = 1.7f;          // roughly eye level
-        private const float CameraPitch = 8f;             // nose down a touch, so the shot is ground not sky
-        private const float CameraFieldOfView = 78f;      // wide angle
+        // Public: LivePreview frames its camera identically, so the live feed picks up exactly where the
+        // stored photograph left off.
+        public const float CameraForwardOffset = 2.0f;   // metres out the front of the gate
+        public const float CameraHeight = 1.7f;          // roughly eye level
+        public const float CameraPitch = 8f;             // nose down a touch, so the shot is ground not sky
+        public const float CameraFieldOfView = 78f;      // wide angle
 
         private static void TakeSnapshotCore(Transform portalTransform)
         {
+            // The routine that got us here waits a frame between choosing the portal and this call, and in
+            // that frame the instance can be unloaded out from under us - the player crossing a zone
+            // boundary mid-walk, or an anchor's world being swept up. Seen exactly once in a 100-portal
+            // scatter test, as an NRE on .position below; a destroyed Transform compares equal to null.
+            if (portalTransform == null) return;
+
             GameObject camObj = null;
             RenderTexture rt = null;
             Texture2D tex = null;
@@ -310,7 +588,9 @@ namespace TortalPortal
                 cam.nearClipPlane = 0.15f;
                 if (gameCam == null) cam.farClipPlane = 300f;
 
-                rt = new RenderTexture(1280, 720, 24);
+                // Resolution is the CameraResolution dropdown, read through the sanitized accessor.
+                Configuration.GetCameraResolution(out int rw, out int rh);
+                rt = new RenderTexture(rw, rh, 24);
                 cam.targetTexture = rt;
                 cam.ResetAspect(); // CopyFrom brings the game window's aspect with it; the RT's is what matters
 
@@ -330,14 +610,18 @@ namespace TortalPortal
                 }
 
                 RenderTexture.active = rt;
-                tex = new Texture2D(1280, 720, TextureFormat.RGB24, false);
-                tex.ReadPixels(new Rect(0, 0, 1280, 720), 0, 0);
+                tex = new Texture2D(rw, rh, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, rw, rh), 0, 0);
                 tex.Apply();
 
                 cam.targetTexture = null;
                 RenderTexture.active = null;
 
-                byte[] jpgBytes = tex.EncodeToJPG(75); // Higher quality JPG
+                // 85 rather than 75, asked for after the 1.2.0b run. Costs roughly a third more bytes per
+                // picture on the wire and in the save; resolution stays 1280x720 on purpose - doubling
+                // pixels would double the ZDO payload again, and the preview panel never shows more than
+                // this anyway.
+                byte[] jpgBytes = tex.EncodeToJPG(85);
 
                 // Store in closest ZDO (the one just placed). Ownership has to be claimed first: a portal
                 // somebody else raised is owned by them or by the server, and a write to a ZDO this peer

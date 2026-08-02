@@ -10,18 +10,19 @@ namespace TortalPortal
     {
         public const string PluginGUID = "wubarrk.TortalPortal";
         public const string PluginName = "TortalPortal";
-        public const string PluginVersion = "1.1.2";
+        public const string PluginVersion = "1.2.0";
 
         private readonly Harmony _harmony = new Harmony(PluginGUID);
 
         private static readonly Type[] PatchTypes =
         {
             typeof(PlacementPatch),
+            typeof(SnapshotAnchor),
+            typeof(SectorSubscription),
             typeof(FilterPatch),
             typeof(PortalBehaviorPatch),
             typeof(SecurityPatch),
             typeof(TamesPatch),
-            typeof(VFXPatch),
             typeof(InputFocusPatch),
             typeof(MessageHudPatch),
             typeof(MapInputPatch),
@@ -44,15 +45,6 @@ namespace TortalPortal
 
             ApplyPatches();
             WireLiveVFXSettings();
-
-            try
-            {
-                VFXPatch.InitBundle();
-            }
-            catch (Exception ex)
-            {
-                Log.LogError($"TortalPortal: VFX bundle failed to load, custom VFX will be disabled. Reason: {ex}");
-            }
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded successfully.");
         }
