@@ -81,6 +81,56 @@ namespace TortalPortal
             return _phase == Phase.Live && id == _id && _rt != null ? _rt : null;
         }
 
+        // ---- looking around --------------------------------------------------------------------------------
+        //
+        // The feed is a real camera standing at the destination, so looking around is just steering it.
+        // The album feeds mouse deltas in; yaw is free, pitch is clamped short of the poles, and the FOV
+        // zoom keeps between "peering" and "fisheye". Everything resets when a feed starts, so each
+        // portal opens on the photograph's own framing.
+
+        private const float LookDegreesPerPixel = 0.22f;
+        private const float ZoomDegreesPerNotch = 2.5f;
+        private const float PitchLimit = 80f;
+        private const float FovMin = 30f;
+        private const float FovMax = 100f;
+
+        private static float _yaw;
+        private static float _pitch;
+
+        public static void AddLook(float dxPixels, float dyPixels)
+        {
+            try
+            {
+                if (_phase != Phase.Live || _cam == null) return;
+                if (float.IsNaN(dxPixels) || float.IsInfinity(dxPixels) ||
+                    float.IsNaN(dyPixels) || float.IsInfinity(dyPixels)) return;
+
+                // GUI y grows downward, and so does positive euler pitch - dragging down looks down.
+                _yaw = Mathf.Repeat(_yaw + dxPixels * LookDegreesPerPixel, 360f);
+                _pitch = Mathf.Clamp(_pitch + dyPixels * LookDegreesPerPixel, -PitchLimit, PitchLimit);
+                _cam.transform.rotation = _rot * Quaternion.Euler(PlacementPatch.CameraPitch + _pitch, _yaw, 0f);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: live preview look failed (non-fatal). Reason: {ex}");
+            }
+        }
+
+        public static void AddZoom(float notches)
+        {
+            try
+            {
+                if (_phase != Phase.Live || _cam == null) return;
+                if (float.IsNaN(notches) || float.IsInfinity(notches)) return;
+
+                _cam.fieldOfView = Mathf.Clamp(_cam.fieldOfView + notches * ZoomDegreesPerNotch, FovMin, FovMax);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: live preview zoom failed (non-fatal). Reason: {ex}");
+            }
+        }
+
         public static void Stop()
         {
             try
@@ -175,6 +225,11 @@ namespace TortalPortal
             {
                 Configuration.GetCameraResolution(out int w, out int h);
                 _rt = new RenderTexture(w, h, 24);
+
+                // Each feed opens on the photograph's own framing; whatever the last one was steered to
+                // does not carry over.
+                _yaw = 0f;
+                _pitch = 0f;
 
                 GameObject go = new GameObject("TortalPortal_LiveCam");
                 Camera cam = go.AddComponent<Camera>();

@@ -1212,6 +1212,24 @@ namespace TortalPortal
 
             // Body() is exactly the image rect - the window was built around it.
             Rect body = TortalUITheme.Body(win);
+
+            // Steering the live camera: right-drag looks around, the wheel zooms. Right button on purpose
+            // - IMGUI buttons only answer the left, so steering can never collide with click-to-close, and
+            // the wheel is dead air in this screen anyway. Both consumed so nothing leaks to the map.
+            if (live != null && ev != null && body.Contains(ev.mousePosition))
+            {
+                if (ev.type == EventType.MouseDrag && ev.button == 1)
+                {
+                    LivePreview.AddLook(ev.delta.x, ev.delta.y);
+                    ev.Use();
+                }
+                else if (ev.type == EventType.ScrollWheel)
+                {
+                    LivePreview.AddZoom(ev.delta.y);
+                    ev.Use();
+                }
+            }
+
             if (live != null)
             {
                 GUI.DrawTexture(body, live, ScaleMode.ScaleToFit);
@@ -1232,7 +1250,7 @@ namespace TortalPortal
 
             // The footer says what the eye is looking at: a live destination, a feed still warming (the
             // far world streaming in behind the stored still), or just the photograph.
-            string feedState = live != null ? "LIVE"
+            string feedState = live != null ? "LIVE   ·   right-drag to look, wheel to zoom"
                 : LivePreview.Active ? "going live..."
                 : "photograph";
             GUI.Label(TortalUITheme.FooterLine(win),
