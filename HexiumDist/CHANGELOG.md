@@ -1,6 +1,6 @@
 # Changelog - TortalPortal
 
-## [1.1.0]
+## [1.1.1]
 
 ### The map is now part of the interface
 - **Fixed:** Clicks on the destination window fell straight through it onto the map behind — toggling pins, starting drags, opening vanilla's pin-name box, and a middle-click through the window pinged the whole server. The window is IMGUI and the map is not, and the two input systems had never been introduced. While the cursor is over any of the mod's windows, the map's mouse handling now stands down entirely.
@@ -42,6 +42,12 @@
 
 ### Colours
 - **Added:** A `5 - Colours` section, all local, all live: `VFXColour` (the whole gateway — veil, rings, sigil, motes, swirl), `PinColour` (the rune map pin), and `UIGoldColour` (the window frames' metal — shadow and highlight tones derive from it, so silver or verdigris is one change).
+
+### For testing a build
+- **Added:** Two console commands, behind `devcommands` like vanilla's own world-editing commands.
+  - `tortal_scatter [count] [radius]` raises test portals at random spots across the world — default 25 within 2000 m, on dry land, spread at least 64 m apart, each named for the biome it landed in and credited to you, with every fifth one PIN-locked (`1234`) so the locked-portal paths have something to be tested against.
+  - `tortal_scatterclear` removes every portal raised that way and leaves real ones alone — each one is marked when it is raised, so cleaning up never has to guess.
+- They raise the real portal prefab rather than a hand-built record, so a scattered portal is a genuine portal in every respect: it survives a world reload, replicates, photographs itself and can be walked through.
 
 ### Compatibility
 - Minimum required version stays at 1.0.1 — the portal index format is unchanged. The two new synced settings simply never reach an older client, which cannot ride a mount through anyway.

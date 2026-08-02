@@ -33,7 +33,7 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.1.0",
+            CurrentVersion = "1.1.1",
             // Still 1.0.1: that is where the portal index was introduced, and nothing since has changed its
             // format. 1.1.0 adds two synced entries (AllowMountedTeleport, TameFollowRadius) but ServerSync
             // matches entries by name, so an older client simply never hears about them - it just cannot ride

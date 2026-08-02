@@ -10,7 +10,7 @@ namespace TortalPortal
     {
         public const string PluginGUID = "wubarrk.TortalPortal";
         public const string PluginName = "TortalPortal";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.1.1";
 
         private readonly Harmony _harmony = new Harmony(PluginGUID);
 
@@ -24,7 +24,8 @@ namespace TortalPortal
             typeof(VFXPatch),
             typeof(InputFocusPatch),
             typeof(MessageHudPatch),
-            typeof(MapInputPatch)
+            typeof(MapInputPatch),
+            typeof(ScatterCommand)
         };
 
         public static Plugin Instance;
