@@ -282,12 +282,17 @@ namespace TortalPortal
             {
                 camObj = new GameObject("PortalSnapshotCam");
                 Camera cam = camObj.AddComponent<Camera>();
-                cam.enabled = false; // we drive it with an explicit Render(); it must never draw to the screen
 
                 // Inherit the game camera's clear flags, culling mask, fog and rendering path so the preview
                 // looks like the world does rather than a flat render of it.
                 Camera gameCam = Camera.main;
                 if (gameCam != null) cam.CopyFrom(gameCam);
+
+                // AFTER CopyFrom, which copies the enabled flag along with everything else. Setting it before
+                // the copy - as this did - handed the flag straight back, leaving a second live camera in the
+                // scene rendering the player's view for a frame before the deferred Destroy caught up with it.
+                // We drive this camera with one explicit Render(); it must never draw to the screen.
+                cam.enabled = false;
 
                 camObj.transform.position = portalTransform.position
                                           + portalTransform.forward * CameraForwardOffset

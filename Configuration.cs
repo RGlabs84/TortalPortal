@@ -63,6 +63,7 @@ namespace TortalPortal
         public static ConfigEntry<float> vfxOrbHeightOffset;
         public static ConfigEntry<float> vfxWakeDistance;
         public static ConfigEntry<float> vfxIntensity;
+        public static ConfigEntry<float> vfxBrightness;
         public static ConfigEntry<Color> vfxColour;
         public static ConfigEntry<Color> pinColour;
         public static ConfigEntry<Color> uiGoldColour;
@@ -116,7 +117,10 @@ namespace TortalPortal
                 new ConfigDescription("How close, in metres, a player has to be before the rune gateway wakes up. Beyond this the portal sits dormant like vanilla - no rings, no runes, no motes - and it spins up as someone approaches.",
                                       new AcceptableValueRange<float>(2f, 50f)));
             vfxIntensity = config.Bind("3 - Features", "VFXIntensity", 1f,
-                new ConfigDescription("Overall throttle on the rune gateway: particle density, brightness and ring thickness all scale with it. 1 is the designed look; below it the gate smoulders, above it it roars.",
+                new ConfigDescription("How MUCH gateway there is: particle density, rune spacing in the swirl and ring thickness all scale with it. 1 is the designed look; below it the gate smoulders, above it it roars. How brightly it burns is VFXBrightness, which moves independently.",
+                                      new AcceptableValueRange<float>(0.1f, 3f)));
+            vfxBrightness = config.Bind("3 - Features", "VFXBrightness", 1f,
+                new ConfigDescription("How brightly the rune gateway burns, with no effect on how much of it there is. Below 1 the runes smoulder darkly against a night sky; above 1 they glare. Applies live to every loaded portal.",
                                       new AcceptableValueRange<float>(0.1f, 3f)));
 
             // The dials. All local - what colour someone's world glows is their own business, and none of it

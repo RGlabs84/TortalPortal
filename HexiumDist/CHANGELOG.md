@@ -19,11 +19,14 @@
 - **Added:** `AllowMountedTeleport` (server-synced, default on) turns the whole behaviour off for a server that wants dismount-and-walk.
 - **Added:** `TameFollowRadius` (server-synced, 2–30 m, default 10): how far around you following tames are collected when you travel — previously a hard-coded 10 m.
 
-### The gateway sleeps — and swirls
-- **Changed:** The runic gateway is now **dormant until someone approaches**, like vanilla's unlit stone: no rings, no runes, no motes, and no rendering cost, until a player — any player, so a friend walking up lights it for you too — comes within `VFXWakeDistance` (local, 2–50 m, default 8). It condenses out of the air as you arrive and exhales back to nothing when everyone leaves.
+### The gateway breathes — and swirls
+- **Changed:** The runic gateway is **dormant until someone approaches**, like vanilla's unlit stone: no rings, no runes, no motes, and no rendering cost, beyond `VFXWakeDistance` (local, 2–50 m, default 8).
+- **Changed:** …and it no longer reads as a **switch**. Strength now follows how close the nearest player actually is, so the gate builds as you walk up and **bleeds away behind you** as you leave — emission falls off and the runes already in the air drift out on their own lifetimes, the way a flier's trail dissolves behind them rather than being cut off mid-air. Any player drives it, so a friend walking up lights the gate for you too.
+- **Changed:** The veil is **rebuilt**. It was a wall of large glyphs drifting straight up the doorway, which read as a sprite sheet scrolling behind a frame. Now **small runes are drawn in off the edges of the opening**, swirling about the gate's own axis and spiralling slowly inward — and each takes its own shade from a band either side of `VFXColour`, so the gateway shimmers through a range instead of glowing one flat tone.
 - **Added:** A fifth layer: a **swirling rune trail** circling the whole structure — an unseen point orbits the pillars weaving up and down, drawing a continuous soft-glow ribbon strung with rune glyphs behind it, the same trail technique as Wings of the Valkyrie's wingtips. It lazes around a quiet gate and whips around a charged one.
-- **Changed:** The last vanilla portal visual — the blue "target found" flare — is **gone** while the custom VFX is on; the swirl and the rings carry that job now. Turn `EnableCustomVFX` off and vanilla behaves exactly as before.
-- **Added:** `VFXIntensity` (local, 0.1–3, default 1): one throttle on the whole show — particle density, brightness, ring thickness, rune spacing in the trail.
+- **Changed:** The last vanilla portal visual — the blue "target found" flare — is **gone** while the custom VFX is on; the swirl and the rings carry that job now.
+- **Fixed:** `EnableCustomVFX` **off did nothing** until you reloaded the world — and it half could not have worked, because the code that switched vanilla's effects off kept no record of what it had touched and so had no way back. It now records the strip per portal and undoes it exactly, and turning the setting either way re-applies to every portal already standing, live.
+- **Added:** `VFXIntensity` (local, 0.1–3, default 1) and `VFXBrightness` (local, 0.1–3, default 1), and they move **independently**: intensity is how *much* gateway there is — density, ring thickness, rune spacing — while brightness is only how hard it burns. Previously one number did both, so anyone who wanted a dimmer gate got a thinner one too. `VFXColour` and `VFXOrbHeightOffset` now also apply live rather than on reload.
 
 ### Map markers
 - **Changed:** The portal markers default to **TortalPortal's own rune pin** — a green glyph in a ring, generated at runtime like all of the mod's art. `PortalPinIcon` still offers vanilla's five icons, plus `Custom`: drop a `TortalPortalPin.png` beside the plugin DLL (ship it in a modpack to give a whole server one look) and the markers use it, falling back to the rune pin if the file is missing.
@@ -33,6 +36,8 @@
 - **Added:** `ShowDestinationPreviews` (local, default on). Turn it off and the destination window drops the photograph panel and narrows — snapshots are still captured and shared either way, so turning it back on costs nothing.
 - **Added:** `MenuCloseMargin` (local, 0–5 m, default 1): the extra distance beyond `MenuOpenDistance` you must retreat before an open window closes itself — the hysteresis that stops it strobing on the boundary, previously hard-coded.
 - **Changed:** `MenuOpenDistance` now runs 0.1–5 m — at the bottom of the dial you must be standing in the gate itself before the window opens.
+- **Fixed:** …and any setting **below 1 m never opened the window at all**, however close you stood. The range was measured as a full 3-D distance from your feet to the portal's proximity point, which sits above the ground, leaving a permanent vertical gap of about a metre that no sub-1 m threshold could ever beat. It is now measured horizontally, which is also what the setting reads as meaning.
+- **Fixed:** The hidden camera that photographs a portal's destination was left **enabled** — the flag was cleared before copying the game camera's settings, and the copy handed it straight back — so for one frame a second live camera rendered the player's view. Cleared after the copy now.
 - **Changed:** More headroom on the text dials: `UITextScale` now reaches 3× and `UIFontSizeDelta` +24, for displays where +2 was still squinting territory.
 
 ### Colours

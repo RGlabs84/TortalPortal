@@ -58,9 +58,11 @@ Your loyal companions travel with you. Any tamed creature following you steps th
 Admins get a dual filtering system beyond vanilla's flat metal ban. Populate the **whitelist** to create an exclusive "these may pass" list, and use the **blacklist** to further restrict specific items — or switch the whole thing to `BypassAll` and let everything through. All of it is server-synced, so the rules are the server's, not each client's.
 
 ### ✨ The Runic Gateway
-Vanilla's portal effects are gone entirely — every last flare — and in their place stands a runic gateway: a veil of drifting Elder Futhark glyphs filling the doorway, two counter-rotating rune circles standing in the gap, a magic circle scribed across the threshold, slow embers rising through the site, and a **swirling rune trail** — an unseen point orbiting the pillars, weaving up and down, drawing a continuous glowing ribbon strung with runes behind it. The whole show brightens and quickens as you step in, and `VFXIntensity` throttles all of it from a smoulder to a roar. `VFXColour` paints it any colour you like.
+Vanilla's portal effects are gone entirely — every last flare — and in their place stands a runic gateway: **small Elder Futhark glyphs drawn in off the edges of the opening**, swirling around the gate's own axis and spiralling slowly inward, each one taking its own shade from a band either side of your chosen colour so the gateway shimmers through a range rather than glowing one flat tone. Around them stand two counter-rotating rune circles, a magic circle scribed across the threshold, slow embers rising through the site, and a **swirling rune trail** — an unseen point orbiting the pillars, weaving up and down, drawing a continuous glowing ribbon strung with runes behind it.
 
-**And it sleeps.** Like vanilla's unlit stone, the gateway sits fully dormant — nothing drawn, nothing simulated — until a player comes within `VFXWakeDistance`, then condenses out of the air as you approach and exhales back to nothing when everyone leaves. Any player wakes it, so a friend walking up lights the gate for you too.
+**And it breathes with your approach.** The gateway sits fully dormant — nothing drawn, nothing simulated — beyond `VFXWakeDistance`, and from there it does not switch on: it *builds*, strengthening the closer you come and bleeding gently away behind you as you leave. Walking off does not snap it shut; emission simply falls away and the runes already in the air drift out on their own, the way a flier's trail dissolves behind them. Any player drives it, so a friend walking up lights the gate for you too.
+
+Two dials, and they move independently: `VFXIntensity` is **how much** gateway there is — density, rune spacing, ring thickness — while `VFXBrightness` is purely **how hard it burns**. Dim it to a smoulder without thinning it, or thicken it without the glare. `VFXColour` paints the lot, and every one of these applies live to portals already standing.
 
 The gateway **measures each portal's own arch and centres itself in it**, so wood, stone and black marble portals all read correctly — and so will any portal a future update or another mod adds.
 
@@ -114,7 +116,8 @@ Settings live in `wubarrk.TortalPortal.cfg`.
 | `OpenFavoritesView` | Default on. When you have favorites, the window opens as the slim favorites strip; the `»` arrow expands it regardless. |
 | `VFXOrbHeightOffset` | Metres to nudge the rune orb up or down inside the gate. The orb auto-centres on each portal's arch, so this is only for fine-tuning. |
 | `VFXWakeDistance` | `2`–`50` metres, default `8`. How close a player must be before the dormant gateway wakes. |
-| `VFXIntensity` | `0.1`–`3`, default `1`. One throttle on the whole gateway: particle density, brightness, ring thickness, rune spacing in the swirl. |
+| `VFXIntensity` | `0.1`–`3`, default `1`. How **much** gateway there is: particle density, ring thickness, rune spacing in the swirl. |
+| `VFXBrightness` | `0.1`–`3`, default `1`. How **brightly** it burns, with no effect on how much of it there is. Applies live. |
 | `VFXColour` | The gateway's colour — veil, rings, sigil, motes and swirl all draw from it. Colour picker in ConfigurationManager. |
 | `PinColour` | The Rune map pin's colour. Vanilla icons and Custom PNGs bring their own. |
 | `UIGoldColour` | The window frames' metal. Shadow and highlight derive from it — silver, bronze or verdigris is one change, applied live. |

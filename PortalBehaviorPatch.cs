@@ -30,15 +30,7 @@ namespace TortalPortal
         {
             try
             {
-                if (Configuration.enableCustomVFX.Value)
-                {
-                    StripVanillaPortalVFX(__instance);
-
-                    if (__instance.gameObject.GetComponent<TortalPortalRuneVFX>() == null)
-                    {
-                        __instance.gameObject.AddComponent<TortalPortalRuneVFX>();
-                    }
-                }
+                ApplyVFXMode(__instance);
             }
             catch (Exception ex)
             {
@@ -46,38 +38,61 @@ namespace TortalPortal
             }
         }
 
-        // EffectFade - which is what TeleportWorld.m_target_found is - caches GetComponentsInChildren<ParticleSystem>()
-        // into m_particles during its own Awake, then writes ps.emission.enabled on every entry from SetActive.
-        // Unity does not guarantee component Awake order, so destroying those systems here left EffectFade holding
-        // destroyed references and the module setter threw "Do not create your own module instances, get them from
-        // a ParticleSystem instance" out of SetActive on every tick - which aborted the UpdatePortal prefix before it
-        // ever reached the menu code, so the portal menu never opened on approach.
-        //
-        // Deactivating instead of destroying keeps every reference valid, and an inactive GameObject renders nothing
-        // no matter what EffectFade does to its emission module afterwards.
-        private static void StripVanillaPortalVFX(TeleportWorld portal)
+        // Bring one portal into line with whatever EnableCustomVFX currently says. Called from Awake for a
+        // portal loading in, and from the config listener for every portal already standing.
+        public static void ApplyVFXMode(TeleportWorld portal)
         {
-            GameObject fadeRoot = portal.m_target_found != null ? portal.m_target_found.gameObject : null;
+            if (portal == null || portal.gameObject == null) return;
 
-            foreach (ParticleSystem ps in portal.GetComponentsInChildren<ParticleSystem>(true))
+            TortalVanillaVFXState state = portal.gameObject.GetComponent<TortalVanillaVFXState>();
+
+            if (Configuration.enableCustomVFX.Value)
             {
-                if (ps == null) continue;
+                if (state == null) state = portal.gameObject.AddComponent<TortalVanillaVFXState>();
+                state.Strip(portal);
 
-                ps.Clear(true);
-                var em = ps.emission;
-                em.enabled = false;
-
-                // Never deactivate the portal root (that would hide the portal) or the EffectFade host (that would
-                // stop EffectFade updating) - silencing their emission is enough.
-                if (ps.gameObject != portal.gameObject && ps.gameObject != fadeRoot)
+                if (portal.gameObject.GetComponent<TortalPortalRuneVFX>() == null)
                 {
-                    ps.gameObject.SetActive(false);
+                    portal.gameObject.AddComponent<TortalPortalRuneVFX>();
                 }
             }
-
-            if (portal.m_connected != null)
+            else
             {
-                portal.m_connected.m_effectPrefabs = new EffectList.EffectData[0];
+                TortalPortalRuneVFX vfx = portal.gameObject.GetComponent<TortalPortalRuneVFX>();
+                // Destroy tears down every emitter it built through its own OnDestroy, so the gateway leaves
+                // nothing behind - without that this would strand a dozen orphaned child objects per portal.
+                if (vfx != null) UnityEngine.Object.Destroy(vfx);
+
+                if (state != null) state.Restore(portal);
+            }
+        }
+
+        // Every portal currently loaded. Only ever runs off a config change, so the cost of the scan is paid
+        // once per dial turn rather than per frame.
+        public static void RefreshLoadedPortals(bool rebuildGateway)
+        {
+            try
+            {
+                foreach (TeleportWorld portal in UnityEngine.Object.FindObjectsOfType<TeleportWorld>())
+                {
+                    if (portal == null) continue;
+
+                    // Colour and orb height are baked when the gateway is built, so changing them means
+                    // building it again. Density and brightness are read live every frame and do not.
+                    if (rebuildGateway && Configuration.enableCustomVFX.Value)
+                    {
+                        TortalPortalRuneVFX existing = portal.gameObject.GetComponent<TortalPortalRuneVFX>();
+                        if (existing != null) existing.Rebuild();
+                        else portal.gameObject.AddComponent<TortalPortalRuneVFX>();
+                        continue;
+                    }
+
+                    ApplyVFXMode(portal);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: refreshing portal visuals after a settings change failed (non-fatal). Reason: {ex}");
             }
         }
 
@@ -111,7 +126,14 @@ namespace TortalPortal
                         ? openRange + Mathf.Max(0f, Configuration.menuCloseMargin.Value)
                         : openRange;
 
-                    localPlayerInRange = Vector3.Distance(local.transform.position, gate) <= range;
+                    // HORIZONTAL distance only. m_proximityRoot sits above the ground while a player's
+                    // transform is down at their feet, so a full 3D measure always carried a vertical
+                    // component of roughly a metre - which is why no MenuOpenDistance below 1 could ever
+                    // be satisfied, however close you stood. Flattening it also makes the setting mean
+                    // what a player reads it to mean: how far away across the ground.
+                    Vector3 toPlayer = local.transform.position - gate;
+                    toPlayer.y = 0f;
+                    localPlayerInRange = toPlayer.magnitude <= range;
                 }
 
                 bool canTeleport = false;
