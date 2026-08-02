@@ -120,6 +120,29 @@ namespace TortalPortal
                     return;
                 }
 
+                // The zones out there may never have been GENERATED - nobody has ever stood in them, and a
+                // scattered portal is hand-placed into raw wilderness. An ungenerated zone has no
+                // vegetation ZDOs at all, so the subscription faithfully delivered a portal on bald
+                // terrain and no wait on the client could ever fix it. Ghost generation is vanilla's own
+                // answer (it is what the server runs around every peer): it creates the zone's vegetation
+                // and location ZDOs without keeping instances. One zone per send tick - SpawnZone is
+                // synchronous - and the new ZDOs join the very same FindSectorObjects sweep below.
+                for (int y = subZone.y - SnapshotAnchor.AnchorRing; y <= subZone.y + SnapshotAnchor.AnchorRing; y++)
+                {
+                    bool spawnedOne = false;
+                    for (int x = subZone.x - SnapshotAnchor.AnchorRing; x <= subZone.x + SnapshotAnchor.AnchorRing; x++)
+                    {
+                        Vector2i z = new Vector2i(x, y);
+                        if (!ZoneSystem.instance.IsZoneGenerated(z) &&
+                            ZoneSystem.instance.SpawnZone(z, ZoneSystem.SpawnMode.Ghost, out _))
+                        {
+                            spawnedOne = true;
+                            break;
+                        }
+                    }
+                    if (spawnedOne) break;
+                }
+
                 TempSectorZdos.Clear();
                 __instance.FindSectorObjects(subZone, SnapshotAnchor.AnchorRing, 0, TempSectorZdos);
                 foreach (ZDO zdo in TempSectorZdos)

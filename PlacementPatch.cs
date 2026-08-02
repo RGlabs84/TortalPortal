@@ -17,9 +17,10 @@ namespace TortalPortal
             try
             {
                 PortalRegistry.OnZNetStart();
-                // Before the dedicated-server bail-out below: the RPC handler is precisely the part a
+                // Before the dedicated-server bail-out below: the RPC handlers are precisely the part a
                 // dedicated server DOES run.
                 SectorSubscription.OnZNetStart();
+                ScatterCommand.OnZNetStart();
                 InitializeBackgroundSnapshot();
             }
             catch (Exception ex)
@@ -354,7 +355,11 @@ namespace TortalPortal
                 pick = cand;
                 break;
             }
-            if (pick == null) yield break;
+            if (pick == null)
+            {
+                Configuration.LogDebug("far pass: every portal in the index is within walking range - nothing for the anchor to do.");
+                yield break;
+            }
 
             // The index row says where the portal is; whether it already has its photograph lives on the
             // portal's own ZDO, which this client is not holding. Vanilla's RequestZDO pulls exactly one -
@@ -374,10 +379,18 @@ namespace TortalPortal
             }
             // Never arriving is a stale index row (demolished portal) or a server too old to answer -
             // either way not worth a strike; the cursor has already moved on.
-            if (zdo == null || !zdo.IsValid()) yield break;
+            if (zdo == null || !zdo.IsValid())
+            {
+                Configuration.LogDebug($"far pass: portal '{pick.Tag}' never arrived from the server (stale index row?); moving on.");
+                yield break;
+            }
 
             byte[] existing = zdo.GetByteArray("PortalSnapshot");
-            if (existing != null && existing.Length > 0) yield break;
+            if (existing != null && existing.Length > 0)
+            {
+                Configuration.LogDebug($"far pass: '{pick.Tag}' already photographed; moving on.");
+                yield break;
+            }
 
             yield return Plugin.Instance.StartCoroutine(SnapshotAnchoredPortal(zdo));
 
@@ -402,6 +415,12 @@ namespace TortalPortal
             // On a client the world around the anchor is not on disk - it has to be ASKED for, and kept
             // asked for: the server-side subscription is renewal-driven so a crashed client costs nothing.
             bool viaServer = ZNet.instance != null && !ZNet.instance.IsServer();
+
+            // One line per attempt and one per outcome, at Info on purpose: the whole feature is invisible
+            // work far from any player, and a silent success is indistinguishable from a pass that never
+            // ran - which has already cost a debugging session.
+            float started = Time.realtimeSinceStartup;
+            Plugin.Log.LogInfo($"TortalPortal: far pass: anchoring '{zdo.GetString(ZDOVars.s_tag)}' at ({pos.x:0},{pos.z:0}){(viaServer ? " via sector subscription" : " from local memory")}.");
 
             _lastAnchorReceivedWorld = false;
             SnapshotAnchor.Set(pos);
@@ -458,6 +477,7 @@ namespace TortalPortal
                 if (tw != null && settled)
                 {
                     yield return TakeSnapshotRoutine(tw.transform);
+                    Plugin.Log.LogInfo($"TortalPortal: far pass: photographed '{zdo.GetString(ZDOVars.s_tag)}' after {Time.realtimeSinceStartup - started:0.0}s.");
                 }
                 else if (tw != null)
                 {

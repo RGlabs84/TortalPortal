@@ -42,6 +42,62 @@ namespace TortalPortal
         private static bool _registered;
         private static Coroutine _running;
 
+        // The clear has to run where the ZDOs actually are. A client only holds the portals loaded around
+        // it, so its local sweep gets one or two and used to end with a note telling you to go run it on
+        // the host - useless on a dedicated server, whose console you are not standing at. The command now
+        // also asks the server to sweep the whole world, admin-gated against the server's own adminlist,
+        // and the count comes back as a reply.
+        private const string ClearRpc = "TortalPortal_ScatterClear";
+        private const string ClearReplyRpc = "TortalPortal_ScatterCleared";
+
+        public static void OnZNetStart()
+        {
+            if (ZRoutedRpc.instance == null) return;
+            ZRoutedRpc.instance.Register(ClearRpc, RPC_ScatterClear);
+            ZRoutedRpc.instance.Register<int>(ClearReplyRpc, RPC_ScatterCleared);
+        }
+
+        private static void RPC_ScatterClear(long sender)
+        {
+            try
+            {
+                if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+
+                ZNetPeer peer = ZNet.instance.GetPeer(sender);
+                string host = peer != null && peer.m_socket != null ? peer.m_socket.GetHostName() : "";
+                if (!ZNet.instance.ListContainsId(ZNet.instance.m_adminList, host))
+                {
+                    Plugin.Log.LogWarning($"TortalPortal: refused a scatter-clear from {host} - not on the adminlist.");
+                    ZRoutedRpc.instance.InvokeRoutedRPC(sender, ClearReplyRpc, -1);
+                    return;
+                }
+
+                int removed = SweepScattered();
+                Plugin.Log.LogInfo($"TortalPortal: tortal_scatterclear (via {host}): removed {removed} scattered portal(s) server-side.");
+                ZRoutedRpc.instance.InvokeRoutedRPC(sender, ClearReplyRpc, removed);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: {nameof(RPC_ScatterClear)} failed (non-fatal). Reason: {ex}");
+            }
+        }
+
+        private static void RPC_ScatterCleared(long sender, int removed)
+        {
+            try
+            {
+                string msg = removed < 0
+                    ? "tortal_scatterclear: the server refused - you are not on its adminlist."
+                    : $"tortal_scatterclear: the server removed {removed} scattered portal(s) across the whole world.";
+                if (Console.instance != null) Console.instance.Print(msg);
+                Plugin.Log.LogInfo($"TortalPortal: {msg}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: {nameof(RPC_ScatterCleared)} failed (non-fatal). Reason: {ex}");
+            }
+        }
+
         [HarmonyPatch(typeof(Terminal), "InitTerminal")]
         [HarmonyPostfix]
         public static void Terminal_InitTerminal_Postfix()
@@ -243,39 +299,14 @@ namespace TortalPortal
 
                 bool authoritative = ZNet.instance != null && ZNet.instance.IsServer();
 
-                int removed = 0;
-                foreach (ZDO zdo in PlacementPatch.GetAllPortals())
-                {
-                    if (zdo == null || !zdo.IsValid()) continue;
-                    if (!zdo.GetBool(ScatterKey, false)) continue;
-
-                    try
-                    {
-                        // If the portal happens to be loaded, let ZNetScene take it down - that removes the
-                        // instance and the ZDO together. Otherwise the ZDO has to be claimed first, because
-                        // DestroyZDO is a silent no-op on something this peer does not own.
-                        ZNetView live = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(zdo) : null;
-                        if (live != null && live.IsValid())
-                        {
-                            ZNetScene.instance.Destroy(live.gameObject);
-                        }
-                        else
-                        {
-                            zdo.SetOwner(ZDOMan.GetSessionID());
-                            ZDOMan.instance.DestroyZDO(zdo);
-                        }
-                        removed++;
-                    }
-                    catch (Exception ex)
-                    {
-                        Plugin.Log.LogError($"TortalPortal: could not remove scattered portal {zdo.m_uid}. Reason: {ex}");
-                    }
-                }
-
-                Say(args, $"tortal_scatterclear: removed {removed} scattered portal(s).");
+                int removed = SweepScattered();
+                Say(args, $"tortal_scatterclear: removed {removed} scattered portal(s) held locally.");
                 if (!authoritative)
                 {
-                    Say(args, "Run this on the host - a client only knows about the portals loaded around it, so the rest are still out there.");
+                    // The local sweep only reaches the handful of portals loaded around this client. The
+                    // server holds them all, so ask it to finish the job; the count comes back as a reply.
+                    Say(args, "Asking the server to sweep the rest of the world...");
+                    ZRoutedRpc.instance?.InvokeRoutedRPC(ClearRpc);
                 }
             }
             catch (Exception ex)
@@ -283,6 +314,39 @@ namespace TortalPortal
                 Plugin.Log.LogError($"TortalPortal: tortal_scatterclear failed. Reason: {ex}");
                 Say(args, "tortal_scatterclear: failed - see the log.");
             }
+        }
+
+        private static int SweepScattered()
+        {
+            int removed = 0;
+            foreach (ZDO zdo in PlacementPatch.GetAllPortals())
+            {
+                if (zdo == null || !zdo.IsValid()) continue;
+                if (!zdo.GetBool(ScatterKey, false)) continue;
+
+                try
+                {
+                    // If the portal happens to be loaded, let ZNetScene take it down - that removes the
+                    // instance and the ZDO together. Otherwise the ZDO has to be claimed first, because
+                    // DestroyZDO is a silent no-op on something this peer does not own.
+                    ZNetView live = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(zdo) : null;
+                    if (live != null && live.IsValid())
+                    {
+                        ZNetScene.instance.Destroy(live.gameObject);
+                    }
+                    else
+                    {
+                        zdo.SetOwner(ZDOMan.GetSessionID());
+                        ZDOMan.instance.DestroyZDO(zdo);
+                    }
+                    removed++;
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogError($"TortalPortal: could not remove scattered portal {zdo.m_uid}. Reason: {ex}");
+                }
+            }
+            return removed;
         }
     }
 }
