@@ -108,6 +108,26 @@ namespace TortalPortal
             }
         }
 
+        // ---- marking the chosen destination ------------------------------------------------------------------
+
+        // Has to be a POSTFIX. UpdatePins assigns every pin's icon colour on every run, so anything set
+        // before it runs is overwritten in the same frame; running afterwards is the only way a tint sticks.
+        // It also re-applies after Minimap destroys and rebuilds a marker (which it does whenever one scrolls
+        // off the edge of the map), so the highlight survives panning without any bookkeeping on our side.
+        [HarmonyPatch(typeof(Minimap), "UpdatePins")]
+        [HarmonyPostfix]
+        public static void Minimap_UpdatePins_Postfix()
+        {
+            try
+            {
+                PortalUIManager.StyleMapPins();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: {nameof(Minimap_UpdatePins_Postfix)} failed (non-fatal, the chosen portal's marker will look like the others). Reason: {ex}");
+            }
+        }
+
         // ---- click-n-go --------------------------------------------------------------------------------------
 
         [HarmonyPatch(typeof(Minimap), nameof(Minimap.OnMapLeftClick))]
@@ -140,6 +160,11 @@ namespace TortalPortal
         {
             try
             {
+                // Checked BEFORE the visibility guard on purpose: travelling closes the window, so by the
+                // time the trailing double-click of a click-n-go arrives there is no window left to guard
+                // with and vanilla would open its pin-name box over the player's arrival.
+                if (PortalUIManager.SuppressMapDblClick()) return false;
+
                 if (PortalUIManager.IsPointerOverWindow()) return false;
                 if (!PortalUIManager.IsSelectUIVisible()) return true;
 

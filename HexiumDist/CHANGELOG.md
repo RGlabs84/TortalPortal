@@ -1,5 +1,38 @@
 # Changelog - TortalPortal
 
+## [1.1.2]
+
+### ⚠️ Every client must now match the server
+- **Changed:** The minimum required version is raised from `1.0.1` to **`1.1.2`** — a server running this build refuses any client on an older one, rather than letting it in to behave differently. It had been pinned to the version that introduced the portal index, on the reasoning that an older client only missed features it did not have; that holds for the wire format but not for the experience, since 1.1.x changed what clicking a map marker does, when the destination window opens and whether it captures the keyboard. A mixed table produces two players describing different behaviour and neither of them wrong, which is far harder to diagnose than a refused connection. **Update every client alongside the server.**
+
+### The map is yours again
+- **Fixed:** **Click-n-go had stopped working.** Clicking a portal marker selected it and swung the map round to centre on that portal — which dragged the marker out from under your cursor, so the second click landed on empty map somewhere else and never travelled. Selecting from the map no longer recentres it; selecting from the *list* still does, which is where that behaviour was always wanted.
+- **Fixed:** The double-click that trails every successful click-n-go could open vanilla's pin-name box over your arrival. It is now refused for a moment after a marker click is acted on.
+- **Fixed:** The destination window took the keyboard the instant it opened, so the rest of your walk up to the portal was typed into the search box instead of moving you. The search box is no longer focused automatically — click it when you want it. `FocusSearchOnOpen` (local, **default off**) puts the old behaviour back.
+
+### Marking the chosen destination
+- **Changed:** Portal markers are all **the same size** now. The selected one used vanilla's `m_doubleSize`, which is a boolean — the only sizes on offer were normal and *twice* normal, which is why some markers looked oddly large.
+- **Added:** The selected portal's marker is **30% larger and red**, name label included, so which portal you are about to step to is unmistakable at a glance. Everything else stays a normal pin.
+
+### Tuned defaults
+A fresh install now starts on the settings this build was actually played on, rather than the ones it was designed with. Every one of these is still a dial — nothing is locked, and an existing config file keeps whatever it already holds.
+- `VFXIntensity` `1` → **`0.64`** and `VFXBrightness` `1` → **`0.64`**: fewer and dimmer particles in the gate itself. The materials are additive, so the old numbers glared against snow and daylight.
+- `VFXSwirlDensity` → **`3`** (top of the range): the trailing ribbon is packed tight. Together with the above, the gateway reads as a fine-drawn thing leaving a dense wake rather than a bright cloud leaving a thin one.
+- `VFXWakeDistance` `8` → **`25`** metres: a gate is already alive as it comes into view and builds as you walk in, instead of appearing beside you.
+- `VFXColour` → **`89FFACFF`**, a paler mint green — at the lower brightness the old deeper green fell away to black at the edges of the swirl. `PinColour` → **`12FF21FF`**, hard and saturated, because a small mark on a busy map wants to shout where the gateway does not.
+- `MenuOpenDistance` → **`0.8`** m, `SnapshotRefreshIntervalMinutes` `30` → **`5`**, `UITextScale` → **`1.05`**, `UIFontSizeDelta` `+2` → **`+6`**.
+- `VFXTintPortalFrame` ships **off**. It works, but matching the gate's own light to the runes is a matter of taste rather than a fix — vanilla's warm arch against cool runes is a look in its own right.
+
+### The gateway
+- **Added:** `VFXTintPortalFrame` (local, default off) — the **portal piece's own glow is tinted to `VFXColour`**. The orange light in the arch was vanilla's colour, not the mod's, so a green gateway sat in an orange gate. Only genuinely emissive surfaces are repainted (the shader's emission keyword, not merely a stale colour value), and only the hue is taken from the dial — a faint glow stays faint. The timber, stone and metalwork keep their own materials. Reversible: turn it off, or turn off `EnableCustomVFX`, and the vanilla colours come straight back.
+- **Added:** `VFXSwirlDensity` (local, `0.25`–`3`, default `3`) — how thickly the runes trailing off the gateway are laid along their ribbon, independent of `VFXIntensity`. The particle ceiling scales with it, so a high setting does not simply cut the tail off partway along.
+
+### Interface
+- **Changed:** `MenuOpenDistance` now defaults to `0.8` m rather than `2.5`. The window is something you walk into the gate to get, not something that meets you on the path.
+- **Changed:** The destination snapshot backfill scans **20% more often** (every 12.5 s rather than 15 s). Worth knowing what that cannot fix: only portals actually loaded around a player can be photographed at all, so a portal nobody has visited still waits for somebody to walk near it.
+
+> Existing config files keep the values they already hold — BepInEx only writes a default into a file that has never seen the setting. The values above are *defaults*; change them by hand or delete the file to take the new ones.
+
 ## [1.1.1]
 
 ### The map is now part of the interface

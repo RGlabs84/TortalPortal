@@ -4,7 +4,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Assets](https://img.shields.io/badge/Assets-100%25_Procedural-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.1.1-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.1.2-lightgrey.svg)]()
 
 > *"The old way was to carve a name into the stone and hope another bore the same. A tally of runes, scratched and rescratched, and still you stepped through blind. Better to know the road before you walk it, Viking."*
 
@@ -100,24 +100,27 @@ Settings live in `wubarrk.TortalPortal.cfg`.
 | `AllowTames` | Whether tamed creatures follow you through. |
 | `TameFollowRadius` | `2`–`30` metres, default `10`. How far around you following tames are gathered when you travel. |
 | `AllowMountedTeleport` | Default on. Teleporting while riding brings the mount and re-seats you on arrival — vanilla saddles, custom saddle items and modded mounts alike. Off means dismount and walk through. |
-| `MenuOpenDistance` | `0.1`–`5` metres, default `2.5`. How close you must be before the destination window and map open by themselves. At `0.1` you must be standing in the gate itself. The portal's visuals keep their own range regardless. |
+| `MenuOpenDistance` | `0.1`–`5` metres, default `0.8`. How close you must be before the destination window and map open by themselves. The default means walking right into the gate; the window is something you go and get rather than something that meets you on the path. Measured horizontally, so a raised platform adds no phantom distance. The portal's visuals keep their own range regardless. |
 | `EnableCustomVFX` | Replaces vanilla portal particles with the runic gateway. |
 | `EnablePortalCameraShot` | Whether placing a portal captures a preview snapshot. |
-| `SnapshotRefreshIntervalMinutes` | Interval for the background snapshot refresh. `0` to disable. |
+| `SnapshotRefreshIntervalMinutes` | Default `5`. How often already-photographed portals are re-shot, so a rebuilt or burnt-out destination stops showing the old view. `0` disables refreshes; portals with no picture are still filled in regardless. |
 | `PortalIndexRefreshSeconds` | `5`–`300`. How often the server rescans the world and republishes the destination list — how quickly a new portal, rename or demolition reaches everyone. Only sent when something actually changed. |
 
 ### Local to your game (not synced — set these however you like)
 | Setting | What it does |
 | :--- | :--- |
-| `UITextScale` | `0.6`–`3.0`. Scales all portal UI text and the layout around it. Applies immediately, no restart. |
-| `UIFontSizeDelta` | `-6`–`+24` points added flat to every text size, after the scale. Defaults to `+2` to match Fatty, which shares this theme. |
+| `UITextScale` | `0.6`–`3.0`, default `1.05`. Scales all portal UI text and the layout around it. Applies immediately, no restart. |
+| `UIFontSizeDelta` | `-6`–`+24` points added flat to every text size, after the scale. Default `+6`. Fatty shares this theme and this setting — match the numbers and the two mods' windows read identically. |
 | `MenuCloseMargin` | `0`–`5` metres, default `1`. How much further out than `MenuOpenDistance` you must retreat before an open window closes itself — the hysteresis that stops it strobing on the boundary. |
 | `ShowDestinationPreviews` | Default on. Off drops the photograph panel and narrows the window. Snapshots are still captured and shared either way. |
 | `OpenFavoritesView` | Default on. When you have favorites, the window opens as the slim favorites strip; the `»` arrow expands it regardless. |
+| `FocusSearchOnOpen` | **Default off.** Puts the text cursor straight in the search box as the window opens. Off because the window opens while you are still walking, and a focused field swallows WASD as typing. |
 | `VFXOrbHeightOffset` | Metres to nudge the rune orb up or down inside the gate. The orb auto-centres on each portal's arch, so this is only for fine-tuning. |
-| `VFXWakeDistance` | `2`–`50` metres, default `8`. How close a player must be before the dormant gateway wakes. |
-| `VFXIntensity` | `0.1`–`3`, default `1`. How **much** gateway there is: particle density, ring thickness, rune spacing in the swirl. |
-| `VFXBrightness` | `0.1`–`3`, default `1`. How **brightly** it burns, with no effect on how much of it there is. Applies live. |
+| `VFXWakeDistance` | `2`–`50` metres, default `25`. How close a player must be before the dormant gateway wakes — far enough that a gate is already alive as it comes into view and builds as you walk in. |
+| `VFXIntensity` | `0.1`–`3`, default `0.64`. How **much** gateway there is: particle density, ring thickness, rune spacing in the swirl. |
+| `VFXBrightness` | `0.1`–`3`, default `0.64`. How **brightly** it burns, with no effect on how much of it there is. The materials are additive, so this climbs fast. Applies live. |
+| `VFXSwirlDensity` | `0.25`–`3`, default `3`. How thickly the runes trailing off the gateway are laid along their ribbon — higher packs them tighter along the same path. Independent of `VFXIntensity`. Applies live. |
+| `VFXTintPortalFrame` | **Default off.** Tints the portal piece's own glowing panel and gate light to `VFXColour`, so the gate and the gateway read as one object instead of an orange portal wearing a coloured light show. Only emissive surfaces are touched; timber, stone and metal keep their own materials. Off because vanilla's warm light against cool runes is a look in its own right. Applies live. |
 | `VFXColour` | The gateway's colour — veil, rings, sigil, motes and swirl all draw from it. Colour picker in ConfigurationManager. |
 | `PinColour` | The Rune map pin's colour. Vanilla icons and Custom PNGs bring their own. |
 | `UIGoldColour` | The window frames' metal. Shadow and highlight derive from it — silver, bronze or verdigris is one change, applied live. |

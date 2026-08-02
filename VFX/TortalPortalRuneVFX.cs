@@ -499,7 +499,13 @@ namespace TortalPortal
                 EmitAt(_swirlGlow, head);
                 _lastGlowDrop = head;
             }
-            if (Vector3.Distance(head, _lastRuneDrop) > Mathf.Max(0.18f, 0.55f / k))
+            // Its own dial, separate from intensity: how tightly the trailing runes are packed along the
+            // ribbon. The drop is distance-gated rather than timed, so this is a spacing in metres and the
+            // spacing stays honest whether the head is lazing round a quiet gate or whipping round a charged
+            // one. The floor drops with the dial too - a fixed one would quietly cap the top of the range.
+            float dens = Configuration.vfxSwirlDensity != null ? Configuration.vfxSwirlDensity.Value : 1f;
+            float runeStep = Mathf.Max(0.06f, 0.55f / (k * dens));
+            if (Vector3.Distance(head, _lastRuneDrop) > runeStep)
             {
                 EmitAt(_swirlRunes, head);
                 _lastRuneDrop = head;
@@ -543,6 +549,12 @@ namespace TortalPortal
             {
                 ParticleSystem.MainModule main = _swirlRunes.main;
                 main.startColor = ColourBand(glow);
+
+                // The ceiling has to move with the dial or the tail simply stops partway along: at triple
+                // density three times as many runes are alive on the same ribbon, and a fixed 90 would drop
+                // every one after that on the floor.
+                int cap = Mathf.Clamp(Mathf.CeilToInt(90f * dens), 90, 400);
+                if (main.maxParticles != cap) main.maxParticles = cap;
             }
             if (_swirlGlow != null)
             {

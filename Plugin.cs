@@ -10,7 +10,7 @@ namespace TortalPortal
     {
         public const string PluginGUID = "wubarrk.TortalPortal";
         public const string PluginName = "TortalPortal";
-        public const string PluginVersion = "1.1.1";
+        public const string PluginVersion = "1.1.2";
 
         private readonly Harmony _harmony = new Harmony(PluginGUID);
 
@@ -71,6 +71,9 @@ namespace TortalPortal
                 Configuration.enableCustomVFX.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(false);
                 Configuration.vfxColour.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(true);
                 Configuration.vfxOrbHeightOffset.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(true);
+                // Only the frame tint moves, so the gateway does not need rebuilding - ApplyVFXMode settles
+                // the tint on its own.
+                Configuration.vfxTintPortalFrame.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(false);
             }
             catch (Exception ex)
             {

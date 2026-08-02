@@ -55,6 +55,10 @@ namespace TortalPortal
                 {
                     portal.gameObject.AddComponent<TortalPortalRuneVFX>();
                 }
+
+                // The piece's own orange glow, brought over to the rune colour. Its own dial, because
+                // somebody may well want the gateway green and the gate itself left as Valheim built it.
+                state.SyncTint(portal, Configuration.vfxTintPortalFrame != null && Configuration.vfxTintPortalFrame.Value);
             }
             else
             {
@@ -63,7 +67,12 @@ namespace TortalPortal
                 // nothing behind - without that this would strand a dozen orphaned child objects per portal.
                 if (vfx != null) UnityEngine.Object.Destroy(vfx);
 
-                if (state != null) state.Restore(portal);
+                // Vanilla VFX off means vanilla colours back too - the frame tint is part of the same look.
+                if (state != null)
+                {
+                    state.RestoreTint();
+                    state.Restore(portal);
+                }
             }
         }
 
@@ -84,6 +93,14 @@ namespace TortalPortal
                         TortalPortalRuneVFX existing = portal.gameObject.GetComponent<TortalPortalRuneVFX>();
                         if (existing != null) existing.Rebuild();
                         else portal.gameObject.AddComponent<TortalPortalRuneVFX>();
+
+                        // The frame tint is derived from the same colour, so it has to move with it - this
+                        // branch skips ApplyVFXMode, which is where the tint is normally settled.
+                        TortalVanillaVFXState state = portal.gameObject.GetComponent<TortalVanillaVFXState>();
+                        if (state != null)
+                        {
+                            state.SyncTint(portal, Configuration.vfxTintPortalFrame != null && Configuration.vfxTintPortalFrame.Value);
+                        }
                         continue;
                     }
 

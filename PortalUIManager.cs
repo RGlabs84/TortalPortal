@@ -144,16 +144,28 @@ namespace TortalPortal
             PortalEntry e = _instance.FindEntryNear(world, radius);
             if (e == null) return false;
 
+            // Vanilla turns two quick clicks into OnMapLeftClick, OnMapLeftClick, OnMapDblClick - so the
+            // second click of a click-n-go arrives here and travels, and then a double-click follows it in
+            // asking to open the pin-name box. This is the window in which that gets refused.
+            _suppressDblClickUntil = Time.unscaledTime + 0.6f;
+
             if (_instance._selected == e) _instance.GoOrPrompt(e);
             else
             {
                 // Selecting from the map while in the slim strip expands to the full window - the strip has
                 // no details panel, so a selection there would land nowhere visible.
                 _instance._slim = false;
-                _instance.Select(e);
+                _instance.Select(e, recentreMap: false);
             }
             return true;
         }
+
+        private static float _suppressDblClickUntil;
+
+        // True for a moment after a marker click was acted on. The double-click that trails a click-n-go must
+        // not reach vanilla: by then the window has closed and IsSelectUIVisible is false, so the ordinary
+        // guard has already stopped applying and the pin-name box would open over the arrival.
+        public static bool SuppressMapDblClick() => Time.unscaledTime < _suppressDblClickUntil;
 
         // Nearest portal marker to a map click, same distance rule as vanilla uses for its own pins.
         private PortalEntry FindEntryNear(Vector3 world, float radius)
@@ -332,9 +344,15 @@ namespace TortalPortal
             Configuration.LogDebug($"Found {_instance._entries.Count} destination portals.");
 
             // Favorites strip when there is anything in it to show, full window otherwise. The strip has no
-            // search box, so the auto-focus only applies to the full window.
+            // search box, so the auto-focus only applies to the full window - and only when it is asked for.
+            //
+            // It used to be unconditional, which meant the window took the keyboard the instant it appeared.
+            // Since the window opens as you walk up to a portal, the rest of the run-up went into the filter
+            // as "wwwww" instead of into moving the player. Off by default now; see FocusSearchOnOpen.
             _instance._slim = Configuration.openFavoritesView.Value && _instance._entries.Exists(e => e.Fav);
-            _instance._focusSearchPending = !_instance._slim;
+            _instance._focusSearchPending = !_instance._slim &&
+                                            Configuration.focusSearchOnOpen != null &&
+                                            Configuration.focusSearchOnOpen.Value;
 
             if (Minimap.instance != null)
             {
@@ -555,10 +573,11 @@ namespace TortalPortal
             else if (_slim) DrawSlimUI();
             else DrawSelectUI();
 
-            // The destination window's search box IS auto-focused on open, which means this mod holds the
-            // keyboard from the moment you walk up to a portal - and therefore that Valheim's own Use key is
-            // suppressed for as long as it does. Anything that used to be reached by pressing E at an open
-            // window needs its own on-screen control instead; see the "Name & PIN" button in DrawSelectUI.
+            // Whichever of our fields currently holds the keyboard, if any. While one does, this mod holds
+            // the keyboard outright and Valheim's own Use key is suppressed with it - so anything that used
+            // to be reached by pressing E at an open window needs its own on-screen control instead; see the
+            // "Name & PIN" button in DrawSelectUI. With FocusSearchOnOpen off (the default) nothing is
+            // focused until the player clicks a field, so walking about with the window up steers the player.
             string focused = GUI.GetNameOfFocusedControl();
             _fieldFocused = focused == SearchFieldName || focused == PinFieldName ||
                             focused == ConfigNameFieldName || focused == ConfigPinFieldName ||
@@ -614,12 +633,12 @@ namespace TortalPortal
             Rect closeRect = new Rect(right.xMax - closeW, search.y, closeW, rowH);
             float buttonEdge = closeRect.x;
 
-            // The way in to this portal's own name and PIN, and the ONLY reliable one while this window is
-            // up. Pressing E again cannot work here: the search field above takes the keyboard the moment the
-            // window opens, InputFocusPatch reports that to Chat.HasFocus, and Valheim gates its Use key
-            // behind Player.TakeInput() - so the keypress never reaches TeleportWorld.Interact at all. That
-            // is what made the configuration window look like it needed several tries to open; whether it
-            // worked came down to whether the field happened to hold focus at that moment.
+            // The way in to this portal's own name and PIN, and the only one that works whatever the keyboard
+            // is doing. Pressing E is unreliable by nature here: the moment any of our fields holds focus,
+            // InputFocusPatch reports that to Chat.HasFocus, Valheim gates its Use key behind
+            // Player.TakeInput(), and the keypress never reaches TeleportWorld.Interact at all. That is what
+            // made the configuration window look like it needed several tries to open - whether it worked
+            // came down to whether a field happened to be focused at that moment. This button never cares.
             if (SecurityPatch.CanConfigure(CurrentSourcePortal))
             {
                 float editW = TortalUITheme.S(128f);
@@ -780,7 +799,13 @@ namespace TortalPortal
             GUILayout.EndArea();
         }
 
-        private void Select(PortalEntry e)
+        // recentreMap: false when the selection came from a click on the map itself.
+        //
+        // Recentring is right for a click in the LIST - the map swings round to show you where that portal
+        // is. It is wrong for a click on the map, because it drags the marker out from under the cursor: the
+        // first click selected and recentred, so the second click of click-n-go landed on empty map somewhere
+        // else entirely and never reached the portal. That is what broke travelling by marker.
+        private void Select(PortalEntry e, bool recentreMap = true)
         {
             _selected = e;
             _showPinPrompt = e.Locked && !Configuration.IsAdmin();
@@ -793,7 +818,7 @@ namespace TortalPortal
             _detailFetch = StartCoroutine(ResolveDetails(e));
 
             HighlightPin(e);
-            ShowPointClearOfWindow(e.Pos);
+            if (recentreMap) ShowPointClearOfWindow(e.Pos);
         }
 
         // ---- map ---------------------------------------------------------------------------------------
@@ -910,13 +935,66 @@ namespace TortalPortal
             foreach (PortalEntry e in _entries) e.MapPin = null;
         }
 
-        // The chosen destination is drawn at double size, so the row you clicked and the mark on the map
-        // read as the same thing.
+        // How the chosen destination is picked out from everything else on the map: 30% larger and red,
+        // while every other portal marker stays exactly the size and colour of a normal pin.
+        private const float SelectedPinScale = 1.3f;
+        private static readonly Color SelectedPinColour = new Color(1f, 0.24f, 0.20f, 1f);
+
+        // Nothing is applied here - all this does is ask the map to redraw its pins, which is what gets
+        // StyleMapPins called. Selection can change while the map is sitting perfectly still, and Minimap
+        // only runs UpdatePins when this flag is set, so without it the highlight would not appear until the
+        // player happened to drag or zoom.
         private void HighlightPin(PortalEntry selected)
         {
-            foreach (PortalEntry e in _entries)
+            if (Minimap.instance != null) Minimap.instance.m_pinUpdateRequired = true;
+        }
+
+        // Called from a postfix on Minimap.UpdatePins, which is the only place this can work from.
+        //
+        // Size used to be vanilla's m_doubleSize, and that is what made some markers look bigger than
+        // others: it is a boolean, so the only sizes on offer were "normal" and "twice as big", and the
+        // selected one took the second. localScale is the lever instead - Minimap reads and writes
+        // sizeDelta but never touches localScale, so nothing fights us for it and any factor is available.
+        //
+        // Colour has to be re-applied here rather than set once, because UpdatePins assigns
+        // m_iconElement.color unconditionally on every run. Running after it is what makes the red stick;
+        // it also means unselected markers need no reset, since vanilla has just painted them itself.
+        public static void StyleMapPins()
+        {
+            if (_instance == null || _instance._pins.Count == 0) return;
+
+            Minimap.PinData selected = _instance._selected != null ? _instance._selected.MapPin : null;
+
+            foreach (Minimap.PinData pin in _instance._pins)
             {
-                if (e.MapPin != null) e.MapPin.m_doubleSize = e == selected;
+                if (pin == null) continue;
+                bool isSelected = pin == selected;
+
+                if (pin.m_uiElement != null)
+                {
+                    // Markers are destroyed and rebuilt as they scroll on and off screen, so a fresh element
+                    // arrives at scale 1 - which is why every pin is set every pass and not just the
+                    // selected one.
+                    Vector3 wanted = isSelected
+                        ? new Vector3(SelectedPinScale, SelectedPinScale, 1f)
+                        : Vector3.one;
+                    if (pin.m_uiElement.localScale != wanted) pin.m_uiElement.localScale = wanted;
+                }
+
+                if (!isSelected) continue;
+
+                // Alpha is left as vanilla set it - it carries the shared-map fade, and overwriting it would
+                // make the selected marker punch through a map region the player has not actually explored.
+                if (pin.m_iconElement != null)
+                {
+                    Color c = pin.m_iconElement.color;
+                    pin.m_iconElement.color = new Color(SelectedPinColour.r, SelectedPinColour.g, SelectedPinColour.b, c.a);
+                }
+                if (pin.m_NamePinData != null && pin.m_NamePinData.PinNameText != null)
+                {
+                    Color c = pin.m_NamePinData.PinNameText.color;
+                    pin.m_NamePinData.PinNameText.color = new Color(SelectedPinColour.r, SelectedPinColour.g, SelectedPinColour.b, c.a);
+                }
             }
         }
 
