@@ -173,8 +173,15 @@ namespace TortalPortal
             TakeSnapshotCore(portalTransform);
         }
 
-        // How often the backfill looks around for a portal that has never been photographed.
-        private const float BackfillScanSeconds = 15f;
+        // How often the backfill looks around for a portal that has never been photographed. 12.5s rather than
+        // the original 15s - a 20% faster shutter, asked for because a world full of unphotographed portals
+        // takes a long time to fill in.
+        //
+        // Worth knowing what this does NOT fix: only portals whose instance is actually spawned around the
+        // player can be photographed at all (CollectLoadedPortals), so a portal on the far side of the map
+        // waits for somebody to walk near it no matter how fast this ticks. Turning the interval down helps
+        // a cluster of portals you are standing among; it cannot help one nobody has visited.
+        private const float BackfillScanSeconds = 12.5f;
 
         private static Coroutine _snapshotRoutine;
 
@@ -282,12 +289,17 @@ namespace TortalPortal
             {
                 camObj = new GameObject("PortalSnapshotCam");
                 Camera cam = camObj.AddComponent<Camera>();
-                cam.enabled = false; // we drive it with an explicit Render(); it must never draw to the screen
 
                 // Inherit the game camera's clear flags, culling mask, fog and rendering path so the preview
                 // looks like the world does rather than a flat render of it.
                 Camera gameCam = Camera.main;
                 if (gameCam != null) cam.CopyFrom(gameCam);
+
+                // AFTER CopyFrom, which copies the enabled flag along with everything else. Setting it before
+                // the copy - as this did - handed the flag straight back, leaving a second live camera in the
+                // scene rendering the player's view for a frame before the deferred Destroy caught up with it.
+                // We drive this camera with one explicit Render(); it must never draw to the screen.
+                cam.enabled = false;
 
                 camObj.transform.position = portalTransform.position
                                           + portalTransform.forward * CameraForwardOffset

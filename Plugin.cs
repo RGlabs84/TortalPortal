@@ -10,7 +10,7 @@ namespace TortalPortal
     {
         public const string PluginGUID = "wubarrk.TortalPortal";
         public const string PluginName = "TortalPortal";
-        public const string PluginVersion = "1.0.3";
+        public const string PluginVersion = "1.1.2";
 
         private readonly Harmony _harmony = new Harmony(PluginGUID);
 
@@ -23,7 +23,9 @@ namespace TortalPortal
             typeof(TamesPatch),
             typeof(VFXPatch),
             typeof(InputFocusPatch),
-            typeof(MessageHudPatch)
+            typeof(MessageHudPatch),
+            typeof(MapInputPatch),
+            typeof(ScatterCommand)
         };
 
         public static Plugin Instance;
@@ -41,6 +43,7 @@ namespace TortalPortal
             PortalRegistry.Init();
 
             ApplyPatches();
+            WireLiveVFXSettings();
 
             try
             {
@@ -52,6 +55,30 @@ namespace TortalPortal
             }
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded successfully.");
+        }
+
+        // The visual dials reach portals that are already standing, instead of waiting for a world reload.
+        // Turning EnableCustomVFX off used to do nothing whatsoever until you reloaded the world, which read
+        // as the setting being broken - and it half was, because the strip kept no record of what it had
+        // switched off and so could never be undone.
+        //
+        // Only the settings that are BAKED at build time need a rebuild. Brightness, intensity and wake
+        // distance are read live every frame and need no handler at all.
+        private void WireLiveVFXSettings()
+        {
+            try
+            {
+                Configuration.enableCustomVFX.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(false);
+                Configuration.vfxColour.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(true);
+                Configuration.vfxOrbHeightOffset.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(true);
+                // Only the frame tint moves, so the gateway does not need rebuilding - ApplyVFXMode settles
+                // the tint on its own.
+                Configuration.vfxTintPortalFrame.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(false);
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"TortalPortal: could not hook the live VFX settings - they will only apply on world reload. Reason: {ex}");
+            }
         }
 
         private void ApplyPatches()

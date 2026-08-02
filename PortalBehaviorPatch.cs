@@ -30,15 +30,7 @@ namespace TortalPortal
         {
             try
             {
-                if (Configuration.enableCustomVFX.Value)
-                {
-                    StripVanillaPortalVFX(__instance);
-
-                    if (__instance.gameObject.GetComponent<TortalPortalRuneVFX>() == null)
-                    {
-                        __instance.gameObject.AddComponent<TortalPortalRuneVFX>();
-                    }
-                }
+                ApplyVFXMode(__instance);
             }
             catch (Exception ex)
             {
@@ -46,38 +38,78 @@ namespace TortalPortal
             }
         }
 
-        // EffectFade - which is what TeleportWorld.m_target_found is - caches GetComponentsInChildren<ParticleSystem>()
-        // into m_particles during its own Awake, then writes ps.emission.enabled on every entry from SetActive.
-        // Unity does not guarantee component Awake order, so destroying those systems here left EffectFade holding
-        // destroyed references and the module setter threw "Do not create your own module instances, get them from
-        // a ParticleSystem instance" out of SetActive on every tick - which aborted the UpdatePortal prefix before it
-        // ever reached the menu code, so the portal menu never opened on approach.
-        //
-        // Deactivating instead of destroying keeps every reference valid, and an inactive GameObject renders nothing
-        // no matter what EffectFade does to its emission module afterwards.
-        private static void StripVanillaPortalVFX(TeleportWorld portal)
+        // Bring one portal into line with whatever EnableCustomVFX currently says. Called from Awake for a
+        // portal loading in, and from the config listener for every portal already standing.
+        public static void ApplyVFXMode(TeleportWorld portal)
         {
-            GameObject fadeRoot = portal.m_target_found != null ? portal.m_target_found.gameObject : null;
+            if (portal == null || portal.gameObject == null) return;
 
-            foreach (ParticleSystem ps in portal.GetComponentsInChildren<ParticleSystem>(true))
+            TortalVanillaVFXState state = portal.gameObject.GetComponent<TortalVanillaVFXState>();
+
+            if (Configuration.enableCustomVFX.Value)
             {
-                if (ps == null) continue;
+                if (state == null) state = portal.gameObject.AddComponent<TortalVanillaVFXState>();
+                state.Strip(portal);
 
-                ps.Clear(true);
-                var em = ps.emission;
-                em.enabled = false;
-
-                // Never deactivate the portal root (that would hide the portal) or the EffectFade host (that would
-                // stop EffectFade updating) - silencing their emission is enough.
-                if (ps.gameObject != portal.gameObject && ps.gameObject != fadeRoot)
+                if (portal.gameObject.GetComponent<TortalPortalRuneVFX>() == null)
                 {
-                    ps.gameObject.SetActive(false);
+                    portal.gameObject.AddComponent<TortalPortalRuneVFX>();
+                }
+
+                // The piece's own orange glow, brought over to the rune colour. Its own dial, because
+                // somebody may well want the gateway green and the gate itself left as Valheim built it.
+                state.SyncTint(portal, Configuration.vfxTintPortalFrame != null && Configuration.vfxTintPortalFrame.Value);
+            }
+            else
+            {
+                TortalPortalRuneVFX vfx = portal.gameObject.GetComponent<TortalPortalRuneVFX>();
+                // Destroy tears down every emitter it built through its own OnDestroy, so the gateway leaves
+                // nothing behind - without that this would strand a dozen orphaned child objects per portal.
+                if (vfx != null) UnityEngine.Object.Destroy(vfx);
+
+                // Vanilla VFX off means vanilla colours back too - the frame tint is part of the same look.
+                if (state != null)
+                {
+                    state.RestoreTint();
+                    state.Restore(portal);
                 }
             }
+        }
 
-            if (portal.m_connected != null)
+        // Every portal currently loaded. Only ever runs off a config change, so the cost of the scan is paid
+        // once per dial turn rather than per frame.
+        public static void RefreshLoadedPortals(bool rebuildGateway)
+        {
+            try
             {
-                portal.m_connected.m_effectPrefabs = new EffectList.EffectData[0];
+                foreach (TeleportWorld portal in UnityEngine.Object.FindObjectsOfType<TeleportWorld>())
+                {
+                    if (portal == null) continue;
+
+                    // Colour and orb height are baked when the gateway is built, so changing them means
+                    // building it again. Density and brightness are read live every frame and do not.
+                    if (rebuildGateway && Configuration.enableCustomVFX.Value)
+                    {
+                        TortalPortalRuneVFX existing = portal.gameObject.GetComponent<TortalPortalRuneVFX>();
+                        if (existing != null) existing.Rebuild();
+                        else portal.gameObject.AddComponent<TortalPortalRuneVFX>();
+
+                        // The frame tint is derived from the same colour, so it has to move with it - this
+                        // branch skips ApplyVFXMode, which is where the tint is normally settled.
+                        TortalVanillaVFXState state = portal.gameObject.GetComponent<TortalVanillaVFXState>();
+                        if (state != null)
+                        {
+                            state.SyncTint(portal, Configuration.vfxTintPortalFrame != null && Configuration.vfxTintPortalFrame.Value);
+                        }
+                        continue;
+                    }
+
+                    ApplyVFXMode(portal);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: refreshing portal visuals after a settings change failed (non-fatal). Reason: {ex}");
             }
         }
 
@@ -106,12 +138,19 @@ namespace TortalPortal
                 {
                     float openRange = Mathf.Min(Configuration.menuOpenDistance.Value, __instance.m_activationRange);
                     // A little further out to close than to open, so hovering on the boundary does not
-                    // strobe the window.
+                    // strobe the window. How much further is MenuCloseMargin.
                     float range = PortalUIManager.IsUIVisible() && PortalUIManager.CurrentSourcePortal == __instance
-                        ? openRange + 1f
+                        ? openRange + Mathf.Max(0f, Configuration.menuCloseMargin.Value)
                         : openRange;
 
-                    localPlayerInRange = Vector3.Distance(local.transform.position, gate) <= range;
+                    // HORIZONTAL distance only. m_proximityRoot sits above the ground while a player's
+                    // transform is down at their feet, so a full 3D measure always carried a vertical
+                    // component of roughly a metre - which is why no MenuOpenDistance below 1 could ever
+                    // be satisfied, however close you stood. Flattening it also makes the setting mean
+                    // what a player reads it to mean: how far away across the ground.
+                    Vector3 toPlayer = local.transform.position - gate;
+                    toPlayer.y = 0f;
+                    localPlayerInRange = toPlayer.magnitude <= range;
                 }
 
                 bool canTeleport = false;
@@ -184,10 +223,12 @@ namespace TortalPortal
                     portal.m_connected.Create(portal.transform.position, portal.transform.rotation);
                 }
 
-                // The glowing inner center lights up only if the LOCAL player can actually teleport.
+                // The last vanilla visual: the "target found" flare. With the custom VFX on it is replaced
+                // outright by the rune swirl and stays dark; with the custom VFX off, vanilla behaviour -
+                // lit only when the LOCAL player can actually teleport.
                 if (portal.m_target_found != null)
                 {
-                    portal.m_target_found.SetActive(localCanTeleport);
+                    portal.m_target_found.SetActive(!Configuration.enableCustomVFX.Value && localCanTeleport);
                 }
             }
             catch (Exception ex)

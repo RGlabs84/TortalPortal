@@ -15,6 +15,10 @@ namespace TortalPortal
         private bool _isVisible;
         private bool _isConfigMode;
 
+        // The slender favorites-only strip. Opens that way when the player has favorites in this world (and
+        // has not turned OpenFavoritesView off); the arrow on the strip expands to the full window and back.
+        private bool _slim;
+
         // Everything the destination list needs to draw a row, resolved once when the window opens. Biome in
         // particular has to be precomputed: WorldGenerator.GetBiome samples world noise, and OnGUI runs at
         // least twice a frame for every row on screen.
@@ -35,6 +39,7 @@ namespace TortalPortal
             public string Label;
             public string SearchKey;
             public bool Locked;
+            public bool Fav;
             public DetailState Details;
             public Minimap.PinData MapPin;
         }
@@ -57,12 +62,21 @@ namespace TortalPortal
         private string _configPin = "";
         private bool _configHasPin;
 
+        // The quick PIN modal: the small "PIN, Enter, gone" window that locked portals get when launched
+        // from the favorites strip or a map marker, instead of hauling the full window out. While it is up
+        // the map is closed and the keyboard is ours outright, like the configuration window.
+        private PortalEntry _pinTarget;
+        private string _pinModalInput = "";
+        private bool _focusPinModalPending;
+        private bool _pinReturnSlim;
+
         // IMGUI control names, so we can tell whether the player is typing into one of our fields rather
         // than steering their character. See InputFocusPatch.
         private const string SearchFieldName = "TortalPortal.Search";
         private const string PinFieldName = "TortalPortal.Pin";
         private const string ConfigNameFieldName = "TortalPortal.ConfigName";
         private const string ConfigPinFieldName = "TortalPortal.ConfigPin";
+        private const string PinModalFieldName = "TortalPortal.PinModal";
 
         private static bool _fieldFocused;
 
@@ -81,11 +95,229 @@ namespace TortalPortal
         public static bool IsTextInputActive()
         {
             if (_fieldFocused) return true;
-            return _instance != null && _instance._isVisible && _instance._isConfigMode;
+            return _instance != null && _instance._isVisible &&
+                   (_instance._isConfigMode || _instance._pinTarget != null);
         }
 
         // "The mod needs the mouse." Either window, both modes - see InputFocusPatch.
         public static bool WantsCursor() => _instance != null && _instance._isVisible;
+
+        // "The cursor is on the mod, not the map." The large map's own mouse handling stands down inside
+        // this - see MapInputPatch. ZInput.mousePosition is bottom-left origin and GUI rects are top-left,
+        // hence the flip.
+        public static bool IsPointerOverWindow()
+        {
+            if (_instance == null || !_instance._isVisible) return false;
+
+            // The configuration window, the PIN modal and the lightbox are all modal - centred over a closed
+            // map or covering the whole screen. Nothing behind any of them should hear the mouse.
+            if (_instance._isConfigMode) return true;
+            if (_instance._pinTarget != null) return true;
+            if (_instance._previewExpanded) return true;
+
+            Vector3 mouse = ZInput.mousePosition;
+            Vector2 gui = new Vector2(mouse.x, Screen.height - mouse.y);
+            return SelectWindowRect().Contains(gui);
+        }
+
+        // The destination picker specifically - the mode where map clicks can mean "go there".
+        public static bool IsSelectUIVisible()
+        {
+            return _instance != null && _instance._isVisible && !_instance._isConfigMode &&
+                   _instance._pinTarget == null && !_instance._previewExpanded;
+        }
+
+        // ---- click-n-go (called from MapInputPatch) ----------------------------------------------------------
+
+        public static bool HasEntryNear(Vector3 world, float radius)
+        {
+            return _instance != null && _instance.FindEntryNear(world, radius) != null;
+        }
+
+        // A map click near one of our markers: first click selects the portal (same as clicking its row),
+        // a click on the already-selected marker travels. Returns true when the click was ours, so vanilla
+        // does not also toggle a checkmark onto the pin.
+        public static bool HandleMapClick(Vector3 world, float radius)
+        {
+            if (!IsSelectUIVisible()) return false;
+
+            PortalEntry e = _instance.FindEntryNear(world, radius);
+            if (e == null) return false;
+
+            // Vanilla turns two quick clicks into OnMapLeftClick, OnMapLeftClick, OnMapDblClick - so the
+            // second click of a click-n-go arrives here and travels, and then a double-click follows it in
+            // asking to open the pin-name box. This is the window in which that gets refused.
+            _suppressDblClickUntil = Time.unscaledTime + 0.6f;
+
+            if (_instance._selected == e) _instance.GoOrPrompt(e);
+            else
+            {
+                // Selecting from the map while in the slim strip expands to the full window - the strip has
+                // no details panel, so a selection there would land nowhere visible.
+                _instance._slim = false;
+                _instance.Select(e, recentreMap: false);
+            }
+            return true;
+        }
+
+        private static float _suppressDblClickUntil;
+
+        // True for a moment after a marker click was acted on. The double-click that trails a click-n-go must
+        // not reach vanilla: by then the window has closed and IsSelectUIVisible is false, so the ordinary
+        // guard has already stopped applying and the pin-name box would open over the arrival.
+        public static bool SuppressMapDblClick() => Time.unscaledTime < _suppressDblClickUntil;
+
+        // Nearest portal marker to a map click, same distance rule as vanilla uses for its own pins.
+        private PortalEntry FindEntryNear(Vector3 world, float radius)
+        {
+            if (!Configuration.showPortalPinsOnMap.Value) return null; // no markers, nothing to click
+
+            PortalEntry best = null;
+            float bestDist = radius;
+            foreach (PortalEntry e in _entries)
+            {
+                float dx = e.Pos.x - world.x;
+                float dz = e.Pos.z - world.z;
+                float d = Mathf.Sqrt(dx * dx + dz * dz);
+                if (d <= bestDist)
+                {
+                    bestDist = d;
+                    best = e;
+                }
+            }
+            return best;
+        }
+
+        // The one gate every "just go" action funnels through. A locked portal cannot be quick-launched -
+        // but it should not haul the whole window out either. It gets the small PIN modal: map closes,
+        // keyboard locks straight to the field, Enter fires it in.
+        private void GoOrPrompt(PortalEntry e)
+        {
+            if (e.Locked && !Configuration.IsAdmin())
+            {
+                OpenPinModal(e);
+                return;
+            }
+
+            ExecuteTeleport(e);
+        }
+
+        // ---- quick PIN modal ---------------------------------------------------------------------------
+
+        private void OpenPinModal(PortalEntry e)
+        {
+            _pinTarget = e;
+            _pinModalInput = "";
+            _focusPinModalPending = true;
+            _pinReturnSlim = _slim;
+
+            // The PIN lives on the portal's own ZDO - start it travelling now so it is usually here before
+            // the player finishes typing.
+            _selected = e;
+            StopDetailFetch();
+            e.Details = DetailState.Pending;
+            _detailFetch = StartCoroutine(ResolveDetails(e));
+
+            // A modal over a live map reads as part of the map; over nothing it reads as a question.
+            if (Minimap.instance != null) Minimap.instance.SetMapMode(Minimap.MapMode.None);
+        }
+
+        // Cancel path: back to exactly where the player was - map up, same window shape.
+        private void ClosePinModal()
+        {
+            _pinTarget = null;
+            _pinModalInput = "";
+            _releaseFocus = true;
+            _slim = _pinReturnSlim;
+            if (Minimap.instance != null) Minimap.instance.SetMapMode(Minimap.MapMode.Large);
+        }
+
+        private void SubmitPinModal()
+        {
+            PortalEntry e = _pinTarget;
+            if (e == null) return;
+
+            if (e.Details == DetailState.Pending)
+            {
+                Player.m_localPlayer.Message(MessageHud.MessageType.Center, "Still reading that portal...");
+                return;
+            }
+            if (e.Details == DetailState.Unavailable)
+            {
+                Player.m_localPlayer.Message(MessageHud.MessageType.Center, "That portal could not be reached.");
+                return;
+            }
+
+            if (_pinModalInput == e.Pin)
+            {
+                _pinTarget = null;
+                _pinModalInput = "";
+                ExecuteTeleport(e);
+            }
+            else
+            {
+                // Stay up for another try - the wrong guess is announced, the field is cleared, and the
+                // focus never left it.
+                Player.m_localPlayer.Message(MessageHud.MessageType.Center, "Wrong PIN!");
+                _pinModalInput = "";
+            }
+        }
+
+        private void DrawPinModal()
+        {
+            // Enter submits from anywhere in the modal. Read BEFORE the field is drawn, because a focused
+            // IMGUI field swallows the KeyDown once it has seen it.
+            Event ev = Event.current;
+            if (ev != null && ev.type == EventType.KeyDown &&
+                (ev.keyCode == KeyCode.Return || ev.keyCode == KeyCode.KeypadEnter))
+            {
+                ev.Use();
+                SubmitPinModal();
+                if (_pinTarget == null) return; // correct PIN: the window is gone, stop drawing it
+            }
+
+            float w = Mathf.Min(Screen.width - 80f, TortalUITheme.S(440f));
+            float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(300f));
+            Rect win = new Rect(Mathf.Round((Screen.width - w) * 0.5f), Mathf.Round((Screen.height - h) * 0.5f), w, h);
+
+            TortalUITheme.DrawWindow(win, "PIN Required");
+
+            Rect body = TortalUITheme.Body(win);
+            float y = body.y;
+            float lineH = TortalUITheme.S(24f);
+            float fieldH = TortalUITheme.S(30f);
+
+            GUI.Label(new Rect(body.x, y, body.width, lineH), _pinTarget.Tag, TortalUITheme.SubTitle);
+            y += lineH + 10f;
+
+            GUI.SetNextControlName(PinModalFieldName);
+            _pinModalInput = GUI.PasswordField(new Rect(body.x, y, body.width, fieldH), _pinModalInput, '*', 10, TortalUITheme.Field);
+
+            if (_focusPinModalPending)
+            {
+                _focusPinModalPending = false;
+                GUI.FocusControl(PinModalFieldName);
+            }
+
+            float btnH = TortalUITheme.S(40f);
+            Rect unlock = new Rect(body.x, body.yMax - btnH, body.width * 0.5f - 8f, btnH);
+            Rect cancel = new Rect(unlock.xMax + 16f, unlock.y, unlock.width, unlock.height);
+
+            if (GUI.Button(unlock, "Unlock", TortalUITheme.Primary))
+            {
+                SubmitPinModal();
+                if (_pinTarget == null) return;
+            }
+            if (GUI.Button(cancel, "Cancel", TortalUITheme.Primary))
+            {
+                ClosePinModal();
+                return;
+            }
+
+            GUI.Label(TortalUITheme.FooterLine(win),
+                      _pinTarget.Details == DetailState.Pending ? "reading the portal..." : "Enter unlocks  ·  Esc cancels",
+                      TortalUITheme.Footer);
+        }
 
         public static void Init()
         {
@@ -108,9 +340,19 @@ namespace TortalPortal
             _instance._isConfigMode = false;
             _instance._isVisible = true;
             _instance._searchFilter = "";
-            _instance._focusSearchPending = true;
             _instance.BuildEntries();
             Configuration.LogDebug($"Found {_instance._entries.Count} destination portals.");
+
+            // Favorites strip when there is anything in it to show, full window otherwise. The strip has no
+            // search box, so the auto-focus only applies to the full window - and only when it is asked for.
+            //
+            // It used to be unconditional, which meant the window took the keyboard the instant it appeared.
+            // Since the window opens as you walk up to a portal, the rest of the run-up went into the filter
+            // as "wwwww" instead of into moving the player. Off by default now; see FocusSearchOnOpen.
+            _instance._slim = Configuration.openFavoritesView.Value && _instance._entries.Exists(e => e.Fav);
+            _instance._focusSearchPending = !_instance._slim &&
+                                            Configuration.focusSearchOnOpen != null &&
+                                            Configuration.focusSearchOnOpen.Value;
 
             if (Minimap.instance != null)
             {
@@ -145,6 +387,8 @@ namespace TortalPortal
             _instance._showPinPrompt = false;
             _instance._pinInput = "";
             _instance._focusSearchPending = false;
+            _instance._pinTarget = null;
+            _instance._pinModalInput = "";
 
             CurrentSourcePortal = targetPortal;
             _instance._isConfigMode = true;
@@ -170,6 +414,9 @@ namespace TortalPortal
                 _instance._pinInput = "";
                 _instance._previewExpanded = false;
                 _instance._focusSearchPending = false;
+                _instance._pinTarget = null;
+                _instance._pinModalInput = "";
+                _instance._focusPinModalPending = false;
                 _instance.StopDetailFetch();
                 _instance.ClearMapPins();
                 _instance.ClearPreview();
@@ -229,7 +476,8 @@ namespace TortalPortal
                     Rot = src.Rot,
                     Biome = WorldGenerator.instance != null ? WorldGenerator.instance.GetBiome(pos) : Heightmap.Biome.None,
                     Distance = Vector3.Distance(origin, pos),
-                    Locked = src.Locked
+                    Locked = src.Locked,
+                    Fav = Favorites.IsFavorite(src.Id)
                 };
 
                 e.SearchKey = tag.ToLowerInvariant();
@@ -240,7 +488,16 @@ namespace TortalPortal
                 _entries.Add(e);
             }
 
-            _entries.Sort((a, b) => string.Compare(a.Tag, b.Tag, StringComparison.OrdinalIgnoreCase));
+            SortEntries();
+        }
+
+        // Favorites first, then alphabetical - one order shared by the full list and the strip, so a portal
+        // never appears to move when the window changes shape.
+        private void SortEntries()
+        {
+            _entries.Sort((a, b) => a.Fav != b.Fav
+                ? (a.Fav ? -1 : 1)
+                : string.Compare(a.Tag, b.Tag, StringComparison.OrdinalIgnoreCase));
         }
 
         // Portal tags are player-entered, and every label we build is rich text. An unescaped '<' would eat
@@ -278,43 +535,67 @@ namespace TortalPortal
             if (!_isVisible) return;
             TortalUITheme.EnsureBuilt();
 
-            // Escape backs out of a field without closing the window, so there is always a way to hand the
-            // keyboard back that is not "click somewhere harmless".
-            if (_fieldFocused && Event.current != null &&
-                Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
+            // Escape: the PIN modal cancels outright, otherwise it backs out of a field without closing the
+            // window, so there is always a way to hand the keyboard back that is not "click somewhere
+            // harmless" - and the lightbox closes, since a click-anywhere overlay should also be Esc-able.
+            if (Event.current != null && Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Escape)
             {
-                _releaseFocus = true;
-                Event.current.Use();
+                if (_pinTarget != null)
+                {
+                    Event.current.Use();
+                    ClosePinModal();
+                    return;
+                }
+                if (_previewExpanded)
+                {
+                    Event.current.Use();
+                    _previewExpanded = false;
+                }
+                else if (_fieldFocused)
+                {
+                    _releaseFocus = true;
+                    Event.current.Use();
+                }
             }
 
-            // Auto-close if the map is closed, but only while picking a destination - the config window is
-            // opened from Interact and has nothing to do with the map.
-            if (!_isConfigMode && Minimap.instance != null && Minimap.instance.m_mode != Minimap.MapMode.Large)
+            // Auto-close if the map is closed, but only while picking a destination - the config window and
+            // the PIN modal deliberately close the map themselves and must survive doing so.
+            if (!_isConfigMode && _pinTarget == null &&
+                Minimap.instance != null && Minimap.instance.m_mode != Minimap.MapMode.Large)
             {
                 HideUI();
                 return;
             }
 
-            if (_isConfigMode) DrawConfigUI();
-            else if (_previewExpanded && _previewTex != null && _selected != null) DrawExpandedPreview();
+            if (_pinTarget != null) DrawPinModal();
+            else if (_isConfigMode) DrawConfigUI();
+            else if (_previewExpanded && _selected != null) DrawExpandedPreview();
+            else if (_slim) DrawSlimUI();
             else DrawSelectUI();
 
-            // The destination window's search box IS auto-focused on open, which means this mod holds the
-            // keyboard from the moment you walk up to a portal - and therefore that Valheim's own Use key is
-            // suppressed for as long as it does. Anything that used to be reached by pressing E at an open
-            // window needs its own on-screen control instead; see the "Name & PIN" button in DrawSelectUI.
+            // Whichever of our fields currently holds the keyboard, if any. While one does, this mod holds
+            // the keyboard outright and Valheim's own Use key is suppressed with it - so anything that used
+            // to be reached by pressing E at an open window needs its own on-screen control instead; see the
+            // "Name & PIN" button in DrawSelectUI. With FocusSearchOnOpen off (the default) nothing is
+            // focused until the player clicks a field, so walking about with the window up steers the player.
             string focused = GUI.GetNameOfFocusedControl();
             _fieldFocused = focused == SearchFieldName || focused == PinFieldName ||
-                            focused == ConfigNameFieldName || focused == ConfigPinFieldName;
+                            focused == ConfigNameFieldName || focused == ConfigPinFieldName ||
+                            focused == PinModalFieldName;
         }
 
-        // Shared so the map-centring maths knows exactly how much of the screen the window is covering,
-        // rather than guessing at it.
+        // Shared so the map-centring maths and the map-input blocking know exactly how much of the screen
+        // the window is covering, rather than guessing at it. Three shapes: the slim favorites strip, the
+        // full window, and the full window without its picture column when previews are off.
         private static Rect SelectWindowRect()
         {
+            bool slim = _instance != null && _instance._slim;
+            float wDesign = slim ? 380f : (Configuration.showPreviews != null && !Configuration.showPreviews.Value ? 640f : 860f);
+            float hDesign = slim ? 560f : 660f;
+
             // Grows with the text scale, but never off the screen.
-            float w = Mathf.Min(Screen.width - 120f, TortalUITheme.S(860f));
-            float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(660f));
+            float w = Mathf.Min(Screen.width - 120f, TortalUITheme.S(wDesign));
+            float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(hDesign));
             // Pinned left so the large map, which we opened, stays readable on the right.
             float x = Mathf.Max(20f, Mathf.Min(52f, Screen.width - w - 20f));
             return new Rect(x, Mathf.Round((Screen.height - h) * 0.5f), w, h);
@@ -350,19 +631,34 @@ namespace TortalPortal
 
             float closeW = TortalUITheme.S(92f);
             Rect closeRect = new Rect(right.xMax - closeW, search.y, closeW, rowH);
+            float buttonEdge = closeRect.x;
 
-            // The way in to this portal's own name and PIN, and the ONLY reliable one while this window is
-            // up. Pressing E again cannot work here: the search field above takes the keyboard the moment the
-            // window opens, InputFocusPatch reports that to Chat.HasFocus, and Valheim gates its Use key
-            // behind Player.TakeInput() - so the keypress never reaches TeleportWorld.Interact at all. That
-            // is what made the configuration window look like it needed several tries to open; whether it
-            // worked came down to whether the field happened to hold focus at that moment.
+            // The way in to this portal's own name and PIN, and the only one that works whatever the keyboard
+            // is doing. Pressing E is unreliable by nature here: the moment any of our fields holds focus,
+            // InputFocusPatch reports that to Chat.HasFocus, Valheim gates its Use key behind
+            // Player.TakeInput(), and the keypress never reaches TeleportWorld.Interact at all. That is what
+            // made the configuration window look like it needed several tries to open - whether it worked
+            // came down to whether a field happened to be focused at that moment. This button never cares.
             if (SecurityPatch.CanConfigure(CurrentSourcePortal))
             {
                 float editW = TortalUITheme.S(128f);
-                if (GUI.Button(new Rect(closeRect.x - editW - 8f, search.y, editW, rowH), "Name & PIN", TortalUITheme.Button))
+                buttonEdge = closeRect.x - editW - 8f;
+                if (GUI.Button(new Rect(buttonEdge, search.y, editW, rowH), "Name & PIN", TortalUITheme.Button))
                 {
                     ShowConfigUI(CurrentSourcePortal);
+                    return;
+                }
+            }
+
+            // Back down to the favorites strip. Shown whenever there is a favorite to land on - collapsing
+            // into an empty strip would just be a smaller window with nothing in it.
+            if (_entries.Exists(e => e.Fav))
+            {
+                float favW = TortalUITheme.S(34f);
+                if (GUI.Button(new Rect(buttonEdge - favW - 8f, search.y, favW, rowH), "«", TortalUITheme.Button))
+                {
+                    _slim = true;
+                    _releaseFocus = true;
                     return;
                 }
             }
@@ -381,8 +677,71 @@ namespace TortalPortal
             DrawDetails(detail);
 
             GUI.Label(TortalUITheme.FooterLine(win),
-                      "Type to filter  ·  every portal is marked on the map, the selected one twice the size  ·  Esc frees the keyboard  ·  close the map to cancel",
+                      "Type to filter  ·  click a map marker to select, click it again to travel  ·  the heart stars a favorite  ·  Esc frees the keyboard",
                       TortalUITheme.Footer);
+        }
+
+        // The quick launcher: a slender strip of nothing but favorites, one click to travel. Everything else
+        // - search, details, previews, PINs - lives behind the expand arrow in the full window.
+        private void DrawSlimUI()
+        {
+            Rect win = SelectWindowRect();
+            TortalUITheme.DrawWindow(win, "Favorites");
+
+            Rect body = TortalUITheme.Body(win);
+            float rowH = TortalUITheme.S(26f);
+
+            // Expand arrow and close, mirroring the full window's top-right controls.
+            float closeW = TortalUITheme.S(78f);
+            float arrowW = TortalUITheme.S(34f);
+            if (GUI.Button(new Rect(body.xMax - closeW, body.y, closeW, rowH), "Close", TortalUITheme.Button))
+            {
+                HideUI();
+                return;
+            }
+            if (GUI.Button(new Rect(body.xMax - closeW - arrowW - 8f, body.y, arrowW, rowH), "»", TortalUITheme.Button))
+            {
+                _slim = false;
+                _focusSearchPending = true;
+                return;
+            }
+            GUI.Label(new Rect(body.x, body.y, body.width - closeW - arrowW - 16f, rowH), "Click to travel", TortalUITheme.Header);
+
+            Rect listRect = new Rect(body.x, body.y + rowH + 10f, body.width, body.height - rowH - 10f);
+            TortalUITheme.DrawInset(listRect);
+
+            GUILayout.BeginArea(new Rect(listRect.x + 4f, listRect.y + 4f, listRect.width - 8f, listRect.height - 8f));
+            _scrollPos = GUILayout.BeginScrollView(_scrollPos);
+
+            int shown = 0;
+            foreach (PortalEntry e in _entries)
+            {
+                if (!e.Fav) continue;
+                shown++;
+
+                Rect row = GUILayoutUtility.GetRect(GUIContent.none, TortalUITheme.Row,
+                                                    GUILayout.ExpandWidth(true), GUILayout.Height(TortalUITheme.S(44f)));
+                if (GUI.Button(row, e.Label, TortalUITheme.Row))
+                {
+                    GoOrPrompt(e);
+                    // GoOrPrompt can tear the window down (teleport) or reshape it (PIN prompt) - either
+                    // way this draw pass is done.
+                    GUILayout.EndScrollView();
+                    GUILayout.EndArea();
+                    return;
+                }
+            }
+
+            if (shown == 0)
+            {
+                GUILayout.Space(24f);
+                GUILayout.Label("No favorites in this world yet.\nExpand with » and mark some portals with the heart.", TortalUITheme.Note);
+            }
+
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+
+            GUI.Label(TortalUITheme.FooterLine(win), "one click travels  ·  » opens the full list", TortalUITheme.Footer);
         }
 
         private void DrawPortalList(Rect area)
@@ -393,6 +752,7 @@ namespace TortalPortal
             string filter = _searchFilter == null ? "" : _searchFilter.ToLowerInvariant();
             int shown = 0;
 
+            bool resort = false;
             foreach (PortalEntry e in _entries)
             {
                 if (filter.Length > 0 && e.SearchKey.IndexOf(filter, StringComparison.Ordinal) < 0) continue;
@@ -404,8 +764,27 @@ namespace TortalPortal
                 // Painted under the row rather than through the style, so the selection survives hover.
                 if (_selected == e) TortalUITheme.DrawSelection(row);
 
-                if (GUI.Button(row, e.Label, TortalUITheme.Row)) Select(e);
+                // The favorite mark gets its own strip of the row. IMGUI fires EVERY control under a click,
+                // so the star cannot be laid over the row button - the two rects must not overlap.
+                float starW = TortalUITheme.S(30f);
+                Rect rowRect = new Rect(row.x, row.y, row.width - starW, row.height);
+                Rect starRect = new Rect(row.xMax - starW, row.y, starW, row.height);
+
+                if (GUI.Button(rowRect, e.Label, TortalUITheme.Row)) Select(e);
+
+                float d = TortalUITheme.S(14f);
+                Rect mark = new Rect(starRect.center.x - d * 0.5f, starRect.center.y - d * 0.5f, d, d);
+                if (GUI.Button(starRect, GUIContent.none, GUIStyle.none))
+                {
+                    // Click handling runs in its own event pass, never between Layout and Repaint, so the
+                    // resort cannot desync IMGUI's control count.
+                    Favorites.Toggle(e.Id);
+                    e.Fav = !e.Fav;
+                    resort = true;
+                }
+                TortalUITheme.DrawHeartMark(mark, e.Fav);
             }
+            if (resort) SortEntries();
 
             if (shown == 0)
             {
@@ -420,7 +799,13 @@ namespace TortalPortal
             GUILayout.EndArea();
         }
 
-        private void Select(PortalEntry e)
+        // recentreMap: false when the selection came from a click on the map itself.
+        //
+        // Recentring is right for a click in the LIST - the map swings round to show you where that portal
+        // is. It is wrong for a click on the map, because it drags the marker out from under the cursor: the
+        // first click selected and recentred, so the second click of click-n-go landed on empty map somewhere
+        // else entirely and never reached the portal. That is what broke travelling by marker.
+        private void Select(PortalEntry e, bool recentreMap = true)
         {
             _selected = e;
             _showPinPrompt = e.Locked && !Configuration.IsAdmin();
@@ -433,7 +818,7 @@ namespace TortalPortal
             _detailFetch = StartCoroutine(ResolveDetails(e));
 
             HighlightPin(e);
-            ShowPointClearOfWindow(e.Pos);
+            if (recentreMap) ShowPointClearOfWindow(e.Pos);
         }
 
         // ---- map ---------------------------------------------------------------------------------------
@@ -503,11 +888,23 @@ namespace TortalPortal
 
             try
             {
-                Minimap.PinType icon = (Minimap.PinType)(int)Configuration.portalPinIcon.Value;
+                PortalPinIcon chosen = Configuration.portalPinIcon.Value;
+                bool vanillaIcon = (int)chosen < 100;
+
+                // Our own pins ride on a vanilla pin type and then have their sprite swapped: AddPin stamps
+                // m_icon from the type, and the map's UI element reads pin.m_icon when it is built - so a
+                // swap made here, before the next pin update, is all it takes.
+                Minimap.PinType icon = vanillaIcon ? (Minimap.PinType)(int)chosen : Minimap.PinType.Icon4;
+                Sprite customSprite = vanillaIcon ? null : TortalPinIcon.Get(chosen);
+
                 foreach (PortalEntry e in _entries)
                 {
                     e.MapPin = Minimap.instance.AddPin(e.Pos, icon, e.Tag, false, false);
-                    if (e.MapPin != null) _pins.Add(e.MapPin);
+                    if (e.MapPin != null)
+                    {
+                        if (customSprite != null) e.MapPin.m_icon = customSprite;
+                        _pins.Add(e.MapPin);
+                    }
                 }
 
                 Configuration.LogDebug($"Marked {_pins.Count} portals on the map.");
@@ -538,13 +935,66 @@ namespace TortalPortal
             foreach (PortalEntry e in _entries) e.MapPin = null;
         }
 
-        // The chosen destination is drawn at double size, so the row you clicked and the mark on the map
-        // read as the same thing.
+        // How the chosen destination is picked out from everything else on the map: 30% larger and red,
+        // while every other portal marker stays exactly the size and colour of a normal pin.
+        private const float SelectedPinScale = 1.3f;
+        private static readonly Color SelectedPinColour = new Color(1f, 0.24f, 0.20f, 1f);
+
+        // Nothing is applied here - all this does is ask the map to redraw its pins, which is what gets
+        // StyleMapPins called. Selection can change while the map is sitting perfectly still, and Minimap
+        // only runs UpdatePins when this flag is set, so without it the highlight would not appear until the
+        // player happened to drag or zoom.
         private void HighlightPin(PortalEntry selected)
         {
-            foreach (PortalEntry e in _entries)
+            if (Minimap.instance != null) Minimap.instance.m_pinUpdateRequired = true;
+        }
+
+        // Called from a postfix on Minimap.UpdatePins, which is the only place this can work from.
+        //
+        // Size used to be vanilla's m_doubleSize, and that is what made some markers look bigger than
+        // others: it is a boolean, so the only sizes on offer were "normal" and "twice as big", and the
+        // selected one took the second. localScale is the lever instead - Minimap reads and writes
+        // sizeDelta but never touches localScale, so nothing fights us for it and any factor is available.
+        //
+        // Colour has to be re-applied here rather than set once, because UpdatePins assigns
+        // m_iconElement.color unconditionally on every run. Running after it is what makes the red stick;
+        // it also means unselected markers need no reset, since vanilla has just painted them itself.
+        public static void StyleMapPins()
+        {
+            if (_instance == null || _instance._pins.Count == 0) return;
+
+            Minimap.PinData selected = _instance._selected != null ? _instance._selected.MapPin : null;
+
+            foreach (Minimap.PinData pin in _instance._pins)
             {
-                if (e.MapPin != null) e.MapPin.m_doubleSize = e == selected;
+                if (pin == null) continue;
+                bool isSelected = pin == selected;
+
+                if (pin.m_uiElement != null)
+                {
+                    // Markers are destroyed and rebuilt as they scroll on and off screen, so a fresh element
+                    // arrives at scale 1 - which is why every pin is set every pass and not just the
+                    // selected one.
+                    Vector3 wanted = isSelected
+                        ? new Vector3(SelectedPinScale, SelectedPinScale, 1f)
+                        : Vector3.one;
+                    if (pin.m_uiElement.localScale != wanted) pin.m_uiElement.localScale = wanted;
+                }
+
+                if (!isSelected) continue;
+
+                // Alpha is left as vanilla set it - it carries the shared-map fade, and overwriting it would
+                // make the selected marker punch through a map region the player has not actually explored.
+                if (pin.m_iconElement != null)
+                {
+                    Color c = pin.m_iconElement.color;
+                    pin.m_iconElement.color = new Color(SelectedPinColour.r, SelectedPinColour.g, SelectedPinColour.b, c.a);
+                }
+                if (pin.m_NamePinData != null && pin.m_NamePinData.PinNameText != null)
+                {
+                    Color c = pin.m_NamePinData.PinNameText.color;
+                    pin.m_NamePinData.PinNameText.color = new Color(SelectedPinColour.r, SelectedPinColour.g, SelectedPinColour.b, c.a);
+                }
             }
         }
 
@@ -620,38 +1070,43 @@ namespace TortalPortal
             PortalEntry e = _selected;
             float y = area.y;
 
-            // Preview, 16:9, in its own inset frame.
-            Rect preview = new Rect(area.x, y, area.width, Mathf.Round(area.width * 9f / 16f));
-            TortalUITheme.DrawInset(preview);
-            if (_previewTex != null)
+            // The preview block only exists when the player wants pictures - with ShowDestinationPreviews
+            // off the details start at the top and the whole window is narrower (see SelectWindowRect).
+            if (Configuration.showPreviews.Value)
             {
-                GUI.DrawTexture(new Rect(preview.x + 1f, preview.y + 1f, preview.width - 2f, preview.height - 2f),
-                                _previewTex, ScaleMode.ScaleAndCrop);
-            }
-            else
-            {
-                GUI.Label(preview,
-                          e.Details == DetailState.Pending ? "Reading portal..." :
-                          e.Details == DetailState.Unavailable ? "Could not reach that portal." :
-                          "No snapshot captured yet.",
-                          TortalUITheme.Note);
-            }
-            TortalUITheme.DrawOutline(preview, new Color(TortalUITheme.Gold.r, TortalUITheme.Gold.g, TortalUITheme.Gold.b, 0.8f), 1f);
+                // Preview, 16:9, in its own inset frame.
+                Rect preview = new Rect(area.x, y, area.width, Mathf.Round(area.width * 9f / 16f));
+                TortalUITheme.DrawInset(preview);
+                if (_previewTex != null)
+                {
+                    GUI.DrawTexture(new Rect(preview.x + 1f, preview.y + 1f, preview.width - 2f, preview.height - 2f),
+                                    _previewTex, ScaleMode.ScaleAndCrop);
+                }
+                else
+                {
+                    GUI.Label(preview,
+                              e.Details == DetailState.Pending ? "Reading portal..." :
+                              e.Details == DetailState.Unavailable ? "Could not reach that portal." :
+                              "No snapshot captured yet.",
+                              TortalUITheme.Note);
+                }
+                TortalUITheme.DrawOutline(preview, new Color(TortalUITheme.Gold.r, TortalUITheme.Gold.g, TortalUITheme.Gold.b, 0.8f), 1f);
 
-            // Invisible until hovered, laid over the thumbnail: clicking it opens the shot full size.
-            if (_previewTex != null && GUI.Button(preview, GUIContent.none, TortalUITheme.ImageButton))
-            {
-                _previewExpanded = true;
-                return;
-            }
-            y = preview.yMax + 4f;
+                // Invisible until hovered, laid over the thumbnail: clicking it opens the shot full size.
+                if (_previewTex != null && GUI.Button(preview, GUIContent.none, TortalUITheme.ImageButton))
+                {
+                    _previewExpanded = true;
+                    return;
+                }
+                y = preview.yMax + 4f;
 
-            if (_previewTex != null)
-            {
-                GUI.Label(new Rect(area.x, y, area.width, TortalUITheme.S(16f)),
-                          "click the image to view it full size", TortalUITheme.Footer);
+                if (_previewTex != null)
+                {
+                    GUI.Label(new Rect(area.x, y, area.width, TortalUITheme.S(16f)),
+                              "click the image to view it full size", TortalUITheme.Footer);
+                }
+                y += TortalUITheme.S(20f);
             }
-            y += TortalUITheme.S(20f);
 
             GUI.Label(new Rect(area.x, y, area.width, TortalUITheme.S(24f)), e.Tag, TortalUITheme.SubTitle);
             y += TortalUITheme.S(28f);
@@ -715,9 +1170,20 @@ namespace TortalPortal
         // picker entirely is the only reliable way to make a modal modal.
         private void DrawExpandedPreview()
         {
+            // Arrow keys page through the album, matching the on-screen arrows.
+            Event ev = Event.current;
+            if (ev != null && ev.type == EventType.KeyDown)
+            {
+                if (ev.keyCode == KeyCode.LeftArrow) { ev.Use(); CyclePreview(-1); return; }
+                if (ev.keyCode == KeyCode.RightArrow) { ev.Use(); CyclePreview(1); return; }
+            }
+
             TortalUITheme.DrawFill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0f, 0f, 0f, 0.86f));
 
-            float aspect = _previewTex.height > 0 ? _previewTex.width / (float)_previewTex.height : 16f / 9f;
+            // A snapshot still on its way from the server (mid-cycle) gets a 16:9 frame to arrive into.
+            float aspect = _previewTex != null && _previewTex.height > 0
+                ? _previewTex.width / (float)_previewTex.height
+                : 16f / 9f;
             float chromeW = 2f * (TortalUITheme.Band + TortalUITheme.Pad);
             float chromeH = 2f * TortalUITheme.Band + TortalUITheme.TitleHeight + TortalUITheme.FooterHeight;
 
@@ -737,20 +1203,73 @@ namespace TortalPortal
 
             // Body() is exactly the image rect - the window was built around it.
             Rect body = TortalUITheme.Body(win);
-            GUI.DrawTexture(body, _previewTex, ScaleMode.ScaleToFit);
+            if (_previewTex != null)
+            {
+                GUI.DrawTexture(body, _previewTex, ScaleMode.ScaleToFit);
+            }
+            else
+            {
+                GUI.Label(body,
+                          _selected.Details == DetailState.Pending ? "Reading portal..." :
+                          _selected.Details == DetailState.Unavailable ? "Could not reach that portal." :
+                          "No snapshot captured yet.",
+                          TortalUITheme.Note);
+            }
             TortalUITheme.DrawOutline(body, new Color(TortalUITheme.Gold.r, TortalUITheme.Gold.g, TortalUITheme.Gold.b, 0.8f), 1f);
 
             GUI.Label(TortalUITheme.FooterLine(win),
                       $"{PrettyBiome(_selected.Biome)}   ·   {(int)_selected.Pos.x}, {(int)_selected.Pos.y}, {(int)_selected.Pos.z}" +
-                      "   ·   click anywhere to close",
+                      "   ·   arrows flip through portals   ·   click anywhere to close",
                       TortalUITheme.Footer);
 
+            // The page-turn arrows, parked in the side gutters outside the frame.
+            float arrowW = TortalUITheme.S(52f);
+            float arrowH = TortalUITheme.S(96f);
+            Rect prev = new Rect(Mathf.Max(8f, win.x - arrowW - 12f), Mathf.Round((Screen.height - arrowH) * 0.5f), arrowW, arrowH);
+            Rect next = new Rect(Mathf.Min(Screen.width - arrowW - 8f, win.xMax + 12f), prev.y, arrowW, arrowH);
+
+            bool cycled = false;
+            if (GUI.Button(prev, "<", TortalUITheme.Primary)) { CyclePreview(-1); cycled = true; }
+            if (GUI.Button(next, ">", TortalUITheme.Primary)) { CyclePreview(1); cycled = true; }
+
             // Drawn last so it sits over the frame. GUIStyle.none keeps it genuinely invisible - the row style's
-            // hover tint would wash the entire screen gold.
-            if (GUI.Button(new Rect(0f, 0f, Screen.width, Screen.height), GUIContent.none, GUIStyle.none))
+            // hover tint would wash the entire screen gold. IMGUI fires EVERY control under a click, so a click
+            // on an arrow also lands here - the hover check is what keeps a page-turn from closing the album.
+            bool overArrow = ev != null && (prev.Contains(ev.mousePosition) || next.Contains(ev.mousePosition));
+            if (GUI.Button(new Rect(0f, 0f, Screen.width, Screen.height), GUIContent.none, GUIStyle.none) && !cycled && !overArrow)
             {
                 _previewExpanded = false;
             }
+        }
+
+        // Page to the neighbouring portal in the list order the player is already looking at (favorites
+        // first, then alphabetical, honouring the current search filter), staying inside the lightbox. The
+        // new portal's snapshot is fetched exactly as a row click would - the frame just waits for it.
+        private void CyclePreview(int dir)
+        {
+            List<PortalEntry> visible = new List<PortalEntry>();
+            string filter = _searchFilter == null ? "" : _searchFilter.ToLowerInvariant();
+            foreach (PortalEntry e in _entries)
+            {
+                if (filter.Length > 0 && e.SearchKey.IndexOf(filter, StringComparison.Ordinal) < 0) continue;
+                visible.Add(e);
+            }
+            if (visible.Count == 0) { _previewExpanded = false; return; }
+
+            int idx = _selected != null ? visible.IndexOf(_selected) : -1;
+            idx = idx < 0 ? 0 : (idx + dir + visible.Count) % visible.Count;
+
+            PortalEntry chosen = visible[idx];
+            _selected = chosen;
+            _showPinPrompt = chosen.Locked && !Configuration.IsAdmin();
+            _pinInput = "";
+            ClearPreview();
+
+            StopDetailFetch();
+            chosen.Details = DetailState.Pending;
+            _detailFetch = StartCoroutine(ResolveDetails(chosen));
+            HighlightPin(chosen);
+            // _previewExpanded stays true - that is the whole point.
         }
 
         private void DrawConfigUI()
@@ -821,7 +1340,8 @@ namespace TortalPortal
         // resolution entirely; Valheim's actual Mono runtime resolves it fine at runtime.
         private static MethodInfo _loadImageMethod;
 
-        private static void LoadImageViaReflection(Texture2D tex, byte[] data)
+        // Internal rather than private: TortalPinIcon loads the admin's custom pin PNG through the same shim.
+        internal static void LoadImageViaReflection(Texture2D tex, byte[] data)
         {
             if (_loadImageMethod == null)
             {
@@ -873,12 +1393,31 @@ namespace TortalPortal
             PortalBehaviorPatch.SuppressAutoOpenFor(target.Id);
             HideUI();
 
-            Player.m_localPlayer.TeleportTo(pos, rotation, true);
+            // A ridden mount has to be identified BEFORE the teleport starts (the controller reference is
+            // gone once dismounted) but only acted on if the teleport actually takes - TeleportTo refuses
+            // during cooldowns, and dismounting a player whose trip never happens would just be rude.
+            Character mount = null;
+            Component mountController = null;
+            if (Configuration.allowMountedTeleport.Value)
+            {
+                TamesPatch.FindMount(Player.m_localPlayer, out mount, out mountController);
+            }
+
+            if (!Player.m_localPlayer.TeleportTo(pos, rotation, true))
+            {
+                Configuration.LogDebug("TeleportTo refused (already teleporting or on cooldown).");
+                return;
+            }
             Game.instance.IncrementPlayerStat(PlayerStatType.PortalsUsed);
 
-            if (Configuration.allowTames.Value)
+            if (mount != null)
             {
-                Configuration.LogDebug("Tame teleporting is enabled but not yet implemented.");
+                // Out of the saddle, mount sent ahead, and a coroutine waits out the loading fade to sit the
+                // player back down through the saddle's own Interact - see TamesPatch for the multiplayer
+                // reasoning (ownership claims, control RPCs).
+                TamesPatch.DismountForTeleport(Player.m_localPlayer);
+                TamesPatch.SendMountAhead(mount, pos, rotation);
+                StartCoroutine(TamesPatch.RemountWhenArrived(Player.m_localPlayer, mountController, mount));
             }
         }
     }
