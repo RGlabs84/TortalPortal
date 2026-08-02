@@ -5,6 +5,7 @@
 ### The album goes live
 - **Added:** Open a portal's picture full-size and the stored photograph gives way to a **live view of the destination** — real weather, real time of day, swaying trees, rendered by your own game through the same anchor the background camera uses. The still stands in while the far world streams in (`going live...` in the footer, then `LIVE`), and closing the album unloads it all within seconds. Works on hosted worlds and dedicated servers alike; nothing new crosses the wire.
 - **Added:** `EnableLivePreviews` (synced, default **on**) — the server's word is final. The feed's lifecycle is a deadman switch: any way of leaving the album — closing it, the window, the world, or a UI error — starves the feed of its keep-alive and it tears itself down within half a second. There is no exit path to forget.
+- **Added:** The live view answers the mouse — **right-drag looks around** the destination, the **wheel zooms** (30°–100°). Each portal opens on its photograph's own framing.
 - The background camera and the live view share the one anchor politely: the walk waits while you watch, the view waits out a mid-flight shot.
 
 ### The dials come off the faceplate
