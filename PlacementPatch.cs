@@ -188,12 +188,10 @@ namespace TortalPortal
         // SectorSubscription on a client of a dedicated server.
         private const float BackfillScanSeconds = 10.5f;
 
-        // How long the anchor pass will wait for the far zone's terrain and objects to stream in and
-        // SETTLE. Longer than the original 25s because readiness is now judged properly (see the stability
-        // loop) and a shot that is not ready gets skipped rather than taken - so the timeout is the budget
-        // for an honest attempt, not a deadline to shoot regardless.
-        private const float AnchorLoadTimeoutSeconds = 40f;
-
+        // The settle budget and rebuild-check radius are synced dials now (AnchorSettleBudgetSeconds,
+        // AnchorSettleRadius), read through Configuration's NaN-proof clamped accessors at each use - a
+        // dial can change mid-session and the next attempt honours it.
+        //
         // The area is considered settled when, this many consecutive polls (at 0.25s each), the sector
         // holds a stable number of ZDOs, every one of them has an instance, and no heightmap nearby has a
         // rebuild queued. IsAreaReady alone lied on dedicated servers: it judges only the ZDOs that have
@@ -201,10 +199,6 @@ namespace TortalPortal
         // what the half-loaded pictures were. Stability catches in-flight arrivals; the heightmap check
         // catches terrain edits (TerrainComp) that landed but have not rebuilt their mesh yet.
         private const int AnchorSettledPolls = 6;
-
-        // Radius for the heightmap-rebuild check. The camera stands 2m from the gate looking down at a
-        // shallow pitch, so 100m covers everything that reads as foreground long before the fog.
-        private const float AnchorSettleRadiusMeters = 100f;
 
         private static Coroutine _snapshotRoutine;
 
@@ -248,8 +242,10 @@ namespace TortalPortal
                 // Then the portals nobody is walking near - the camera walking the world on its own, one
                 // portal per tick. Skipped mid-teleport because the player's own active area is not loaded
                 // then, and ZNetScene refuses to create objects until it is.
+                // The live preview holds the same single anchor the walk uses; while a player is actually
+                // watching a destination, the background camera waits its turn.
                 if (Configuration.remoteSnapshots.Value && !Player.m_localPlayer.IsTeleporting() &&
-                    ZNet.instance != null)
+                    ZNet.instance != null && !LivePreview.Active)
                 {
                     if (ZNet.instance.IsServer())
                     {
@@ -431,9 +427,10 @@ namespace TortalPortal
                 if (viaServer) SectorSubscription.Renew(pos);
                 float nextRenew = Time.realtimeSinceStartup + SectorSubscription.RenewSeconds;
 
+                float budget = Configuration.AnchorTimeoutSafe;
                 int settledStreak = 0;
                 int lastZdoCount = -1;
-                float deadline = Time.realtimeSinceStartup + AnchorLoadTimeoutSeconds;
+                float deadline = Time.realtimeSinceStartup + budget;
                 while (Time.realtimeSinceStartup < deadline)
                 {
                     if (ZNetScene.instance == null || ZoneSystem.instance == null || Player.m_localPlayer == null)
@@ -456,7 +453,7 @@ namespace TortalPortal
                     bool ready = zdoCount > 0 &&
                                  zdoCount == lastZdoCount &&
                                  ZNetScene.instance.IsAreaReady(pos) &&
-                                 !Heightmap.HaveQueuedRebuild(pos, AnchorSettleRadiusMeters) &&
+                                 !Heightmap.HaveQueuedRebuild(pos, Configuration.AnchorSettleRadiusSafe) &&
                                  SnapshotAnchor.DistantTerrainReady;
                     lastZdoCount = zdoCount;
 
@@ -485,11 +482,11 @@ namespace TortalPortal
                     // Never shoot a half-loaded scene. A missing photograph heals itself on a later lap; a
                     // photograph of missing terrain and bald ground is worse than none and - because the
                     // backfill only chases portals with NO picture - would stand forever.
-                    Plugin.Log.LogInfo($"TortalPortal: far portal at {pos} arrived but had not settled within {AnchorLoadTimeoutSeconds}s (still streaming or terrain still building); skipping the shot rather than storing a half-loaded picture.");
+                    Plugin.Log.LogInfo($"TortalPortal: far portal at {pos} arrived but had not settled within {budget:0}s (still streaming or terrain still building); skipping the shot rather than storing a half-loaded picture.");
                 }
                 else
                 {
-                    Plugin.Log.LogInfo($"TortalPortal: far portal at {pos} did not stream in within {AnchorLoadTimeoutSeconds}s; will try it again next lap.");
+                    Plugin.Log.LogInfo($"TortalPortal: far portal at {pos} did not stream in within {budget:0}s; will try it again next lap.");
                 }
             }
             finally
@@ -505,7 +502,7 @@ namespace TortalPortal
         {
             if (ZDOMan.instance == null) return 0;
             _anchorCountTemp.Clear();
-            ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(pos), SnapshotAnchor.AnchorRing, 0, _anchorCountTemp);
+            ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(pos), SnapshotAnchor.Ring, 0, _anchorCountTemp);
             return _anchorCountTemp.Count;
         }
 
@@ -547,10 +544,12 @@ namespace TortalPortal
         // the arch, so every preview was the gate itself with the rune VFX blazing across the middle of it and
         // the actual destination hidden behind. Standing it out in front looking away puts the portal, and
         // everything we draw inside it, behind the camera entirely.
-        private const float CameraForwardOffset = 2.0f;   // metres out the front of the gate
-        private const float CameraHeight = 1.7f;          // roughly eye level
-        private const float CameraPitch = 8f;             // nose down a touch, so the shot is ground not sky
-        private const float CameraFieldOfView = 78f;      // wide angle
+        // Public: LivePreview frames its camera identically, so the live feed picks up exactly where the
+        // stored photograph left off.
+        public const float CameraForwardOffset = 2.0f;   // metres out the front of the gate
+        public const float CameraHeight = 1.7f;          // roughly eye level
+        public const float CameraPitch = 8f;             // nose down a touch, so the shot is ground not sky
+        public const float CameraFieldOfView = 78f;      // wide angle
 
         private static void TakeSnapshotCore(Transform portalTransform)
         {
@@ -589,7 +588,9 @@ namespace TortalPortal
                 cam.nearClipPlane = 0.15f;
                 if (gameCam == null) cam.farClipPlane = 300f;
 
-                rt = new RenderTexture(1280, 720, 24);
+                // Resolution is the CameraResolution dropdown, read through the sanitized accessor.
+                Configuration.GetCameraResolution(out int rw, out int rh);
+                rt = new RenderTexture(rw, rh, 24);
                 cam.targetTexture = rt;
                 cam.ResetAspect(); // CopyFrom brings the game window's aspect with it; the RT's is what matters
 
@@ -609,8 +610,8 @@ namespace TortalPortal
                 }
 
                 RenderTexture.active = rt;
-                tex = new Texture2D(1280, 720, TextureFormat.RGB24, false);
-                tex.ReadPixels(new Rect(0, 0, 1280, 720), 0, 0);
+                tex = new Texture2D(rw, rh, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, rw, rh), 0, 0);
                 tex.Apply();
 
                 cam.targetTexture = null;

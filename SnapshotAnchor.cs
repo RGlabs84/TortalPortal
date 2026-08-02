@@ -27,11 +27,12 @@ namespace TortalPortal
     [HarmonyPatch]
     public static class SnapshotAnchor
     {
-        // 1 ring = a 3x3 block of zones, 192m across. Vanilla's active area is wider, but the shot is
-        // taken at eye level two metres from the gate and the fog curtains off the edge long before 96m,
-        // so the wider block would cost load time and buy nothing visible. Public because the server's
-        // SectorSubscription must send exactly the sectors this class will try to instantiate.
-        public const int AnchorRing = 1;
+        // 1 ring = a 3x3 block of zones, 192m across; 2 = 5x5. A synced dial now (AnchorZoneRing), read
+        // through Configuration's clamped accessor - ring 3 would be 49 zones and a guaranteed hitch, so
+        // the clamp is the game-breaking guard. Shared with the server's SectorSubscription, which must
+        // send exactly the sectors this class will try to instantiate; the sync is what keeps the two
+        // ends agreeing.
+        public static int Ring => Configuration.AnchorRingSafe;
 
         private static bool _active;
         private static Vector3 _position;
@@ -125,10 +126,11 @@ namespace TortalPortal
             if (!_active || ZoneSystem.instance == null) return;
             try
             {
+                int ring = Ring;
                 Vector2i center = ZoneSystem.GetZone(_position);
-                for (int y = center.y - AnchorRing; y <= center.y + AnchorRing; y++)
+                for (int y = center.y - ring; y <= center.y + ring; y++)
                 {
-                    for (int x = center.x - AnchorRing; x <= center.x + AnchorRing; x++)
+                    for (int x = center.x - ring; x <= center.x + ring; x++)
                     {
                         if (ZoneSystem.instance.PokeLocalZone(new Vector2i(x, y))) return;
                     }
@@ -154,14 +156,14 @@ namespace TortalPortal
                 // vanilla is already loading it - appending would put the same ZDOs in the list twice.
                 Vector2i anchorZone = ZoneSystem.GetZone(_position);
                 Vector2i refZone = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
-                int overlap = ZoneSystem.instance.m_activeArea + AnchorRing;
+                int overlap = ZoneSystem.instance.m_activeArea + Ring;
                 if (Mathf.Abs(anchorZone.x - refZone.x) <= overlap &&
                     Mathf.Abs(anchorZone.y - refZone.y) <= overlap)
                 {
                     return;
                 }
 
-                ZDOMan.instance.FindSectorObjects(anchorZone, AnchorRing, 0, currentNearObjects);
+                ZDOMan.instance.FindSectorObjects(anchorZone, Ring, 0, currentNearObjects);
             }
             catch (Exception ex)
             {

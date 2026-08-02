@@ -28,6 +28,17 @@ namespace TortalPortal
         Custom = 101
     }
 
+    // What the portal camera renders at - stored snapshots and the live feed both. An enum rather than
+    // free width/height fields: ConfigurationManager draws it as a dropdown, and there is no way to type
+    // a 16000x9000 render target into a dropdown.
+    public enum CameraResolution
+    {
+        Res480p = 0,   // 854 x 480
+        Res720p = 1,   // 1280 x 720
+        Res900p = 2,   // 1600 x 900
+        Res1080p = 3   // 1920 x 1080
+    }
+
     public static class Configuration
     {
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
@@ -80,6 +91,11 @@ namespace TortalPortal
         public static ConfigEntry<bool> enablePortalCameraShot;
         public static ConfigEntry<int> snapshotRefreshIntervalMinutes;
         public static ConfigEntry<bool> remoteSnapshots;
+        public static ConfigEntry<bool> livePreviews;
+        public static ConfigEntry<CameraResolution> cameraResolution;
+        public static ConfigEntry<int> anchorRing;
+        public static ConfigEntry<float> anchorTimeoutSeconds;
+        public static ConfigEntry<float> anchorSettleRadius;
         public static ConfigEntry<float> portalIndexRefreshSeconds;
         public static ConfigEntry<float> uiTextScale;
         public static ConfigEntry<int> uiFontSizeDelta;
@@ -168,6 +184,19 @@ namespace TortalPortal
             snapshotRefreshIntervalMinutes = config.Bind("3 - Features", "SnapshotRefreshIntervalMinutes", 5, "Interval in minutes for the background coroutine to re-photograph portals that already have a picture, so a destination that has been built up or burnt down does not keep showing the old view. 5 rather than 30: a portal only gets photographed while a player is standing near it anyway, so a long interval mostly meant missing the chance entirely. Set to 0 to disable refreshes - portals with no picture at all are still filled in regardless.");
             remoteSnapshots = config.Bind("3 - Features", "EnableRemoteSnapshots", true,
                 "Quietly load the world around ONE never-photographed portal at a time - out where nobody is standing - photograph it and unload it again, so portals nobody visits still get their picture. On a hosted world the hosting player's game does this from its own memory; on a dedicated server (which draws nothing itself) each player's game asks the server for the far portal's surroundings, photographs it and hands the picture back. Costs whoever is doing it a few seconds of background zone loading per portal. Off returns to photographs only being taken where somebody actually walks.");
+            livePreviews = config.Bind("3 - Features", "EnableLivePreviews", true,
+                "Open a portal's picture full-size and, instead of the stored photograph, watch the destination LIVE - real weather, real time of day, rendered by your own game through the same anchor the background camera uses. The stored still shows while the far world streams in, then the feed takes over. Costs a held-open patch of far world for exactly as long as the album is open. Server-synced: turning it off on the server turns it off for everyone.");
+            cameraResolution = config.Bind("3 - Features", "CameraResolution", CameraResolution.Res720p,
+                "What the portal camera renders at - stored snapshots and the live feed both. Higher looks better and costs more: stored pictures live on the portal itself and travel to every player, so 1080p roughly doubles that traffic against 720p. Applies to new photographs; existing ones keep the size they were taken at.");
+            anchorRing = config.Bind("3 - Features", "AnchorZoneRing", 1,
+                new ConfigDescription("How much world the far camera loads around a portal, in rings of 64m zones: 1 = a 3x3 block (192m), 2 = a 5x5 block (320m). The photograph's foreground either way - 2 pushes the fully-detailed ground further out at more than double the loading cost. Hard-capped at 2: a wider ring is a guaranteed hitch on any hardware.",
+                                      new AcceptableValueRange<int>(1, 2)));
+            anchorTimeoutSeconds = config.Bind("3 - Features", "AnchorSettleBudgetSeconds", 40f,
+                new ConfigDescription("How long the far camera will wait for a destination to finish streaming in and settle before giving up on the attempt. It never shoots early - an unsettled scene is skipped and retried later, so raising this trades patience for coverage of enormous bases. The live preview uses it too, as the point where it stops waiting for perfection and goes live with what is standing.",
+                                      new AcceptableValueRange<float>(10f, 120f)));
+            anchorSettleRadius = config.Bind("3 - Features", "AnchorSettleRadius", 100f,
+                new ConfigDescription("How far around the portal, in metres, terrain must be finished rebuilding before the camera considers the scene settled. Smaller accepts shots sooner; larger insists on a wider finished foreground.",
+                                      new AcceptableValueRange<float>(30f, 300f)));
             portalIndexRefreshSeconds = config.Bind("3 - Features", "PortalIndexRefreshSeconds", 10f,
                 new ConfigDescription("How often the server rescans the world for portals and republishes the destination list. Renames, new portals and demolitions show up within this window. Only republished when something actually changed.",
                                       new AcceptableValueRange<float>(5f, 300f)));
@@ -214,10 +243,49 @@ namespace TortalPortal
             configSync.AddConfigEntry(enablePortalCameraShot);
             configSync.AddConfigEntry(snapshotRefreshIntervalMinutes);
             configSync.AddConfigEntry(remoteSnapshots);
+            configSync.AddConfigEntry(livePreviews);
+            configSync.AddConfigEntry(cameraResolution);
+            configSync.AddConfigEntry(anchorRing);
+            configSync.AddConfigEntry(anchorTimeoutSeconds);
+            configSync.AddConfigEntry(anchorSettleRadius);
             configSync.AddConfigEntry(portalIndexRefreshSeconds);
 
             // Pushes anything that moved into its new home, stamps the file and saves it.
             ConfigMigration.Finish(config, configVersion);
+        }
+
+        // ---- sanitized reads for the anchor dials ----------------------------------------------------------
+        //
+        // AcceptableValueRange clamps what the settings UI can produce, but a hand-edited file can hold
+        // anything - NaN, Infinity, 9999. NaN in particular is poison: Mathf.Clamp(NaN) is still NaN, and a
+        // NaN deadline turns a wait loop into a forever loop. Every consumer of these dials reads through
+        // here, so a poisoned file degrades to the shipped default rather than to a hang or a 49-zone load.
+
+        public static int AnchorRingSafe => Mathf.Clamp(anchorRing != null ? anchorRing.Value : 1, 1, 2);
+
+        public static float AnchorTimeoutSafe => SaneFloat(anchorTimeoutSeconds, 40f, 10f, 120f);
+
+        public static float AnchorSettleRadiusSafe => SaneFloat(anchorSettleRadius, 100f, 30f, 300f);
+
+        private static float SaneFloat(ConfigEntry<float> entry, float fallback, float min, float max)
+        {
+            float v = entry != null ? entry.Value : fallback;
+            if (float.IsNaN(v) || float.IsInfinity(v)) return fallback;
+            return Mathf.Clamp(v, min, max);
+        }
+
+        // An enum entry can also be poisoned in the file (BepInEx parses what it can, but a cast from a
+        // stale int is not bounded). Unknown values fall back to 720p.
+        public static void GetCameraResolution(out int width, out int height)
+        {
+            CameraResolution r = cameraResolution != null ? cameraResolution.Value : CameraResolution.Res720p;
+            switch (r)
+            {
+                case CameraResolution.Res480p: width = 854; height = 480; break;
+                case CameraResolution.Res900p: width = 1600; height = 900; break;
+                case CameraResolution.Res1080p: width = 1920; height = 1080; break;
+                default: width = 1280; height = 720; break;
+            }
         }
 
         public static bool IsAdmin()

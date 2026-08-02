@@ -2,6 +2,19 @@
 
 ## [1.2.0]
 
+### The album goes live
+- **Added:** Open a portal's picture full-size and the stored photograph gives way to a **live view of the destination** — real weather, real time of day, swaying trees, rendered by your own game through the same anchor the background camera uses. The still stands in while the far world streams in (`going live...` in the footer, then `LIVE`), and closing the album unloads it all within seconds. Works on hosted worlds and dedicated servers alike; nothing new crosses the wire.
+- **Added:** `EnableLivePreviews` (synced, default **on**) — the server's word is final. The feed's lifecycle is a deadman switch: any way of leaving the album — closing it, the window, the world, or a UI error — starves the feed of its keep-alive and it tears itself down within half a second. There is no exit path to forget.
+- The background camera and the live view share the one anchor politely: the walk waits while you watch, the view waits out a mid-flight shot.
+
+### The dials come off the faceplate
+All server-synced — the server's values are the law of the table — and every one is read through a clamped, NaN-proof accessor, so a hand-poisoned config file degrades to the shipped default rather than to a frozen loop or a 49-zone hitch.
+- **`CameraResolution`** (dropdown: 480p / **720p** / 900p / 1080p) — what the portal camera renders at, stored snapshots and live feed both. Stored pictures travel to every player, so higher resolutions cost real bandwidth; existing photographs keep the size they were taken at.
+- **`AnchorZoneRing`** (1–2, default **1**) — how much world the far camera loads: 1 = 3×3 zones (192 m), 2 = 5×5 (320 m). Hard-capped at 2; a wider ring is a guaranteed hitch on any hardware.
+- **`AnchorSettleBudgetSeconds`** (10–120, default **40**) — how long a far shot may wait for the destination to settle before the attempt is skipped. Raising it trades patience for coverage of enormous bases. Also where the live preview stops waiting for perfection and goes live with what is standing.
+- **`AnchorSettleRadius`** (30–300 m, default **100**) — how far around the portal terrain must be finished rebuilding before a scene counts as settled.
+- The server refuses sector subscriptions outright when `EnableRemoteSnapshots` is off, and refuses NaN/Infinity anchor positions — a client with a doctored config gets silence, not sectors.
+
 ### The camera walks the world on its own
 - **Added:** **Remote snapshots** — portals nobody visits finally get their photograph. Until now a destination picture could only be taken where a player happened to be standing, because the world simply does not exist anywhere else: Valheim builds terrain and objects only around players. The hosting player's game now quietly *anchors* one never-photographed portal at a time — out where nobody is — streams in a 3×3-zone patch of world around it, takes the shot, and lets it all unload again seconds later. One portal per backfill tick, round-robin so a slow-loading one cannot starve the rest, and the loading is spread thin enough that the host should never feel it.
 - **Added:** `EnableRemoteSnapshots` (synced, default **on**), governing both editions of the walk below.

@@ -84,6 +84,17 @@ namespace TortalPortal
                     return;
                 }
 
+                // The server's own dial is the authority, whatever the sender believes: with the feature
+                // off no subscription is ever granted, so even a client ignoring its synced config gets
+                // nothing. NaN/Infinity positions are refused the same way - a subscription at a poisoned
+                // position would ghost-generate garbage zones forever.
+                if (!Configuration.remoteSnapshots.Value) { Subs.Remove(sender); return; }
+                if (float.IsNaN(pos.x) || float.IsNaN(pos.y) || float.IsNaN(pos.z) ||
+                    float.IsInfinity(pos.x) || float.IsInfinity(pos.y) || float.IsInfinity(pos.z))
+                {
+                    return;
+                }
+
                 Subs[sender] = new Sub { Pos = pos, Expires = Time.realtimeSinceStartup + SubscriptionSeconds };
             }
             catch (Exception ex)
@@ -100,6 +111,8 @@ namespace TortalPortal
             try
             {
                 if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+                // Feature toggled off with subscriptions in flight: drop them all, instantly vanilla.
+                if (!Configuration.remoteSnapshots.Value) { Subs.Clear(); return; }
                 if (!Subs.TryGetValue(peer.m_peer.m_uid, out Sub sub)) return;
 
                 if (Time.realtimeSinceStartup > sub.Expires)
@@ -113,7 +126,7 @@ namespace TortalPortal
                 // Mirrors the guard in SnapshotAnchor's CreateObjects prefix.
                 Vector2i subZone = ZoneSystem.GetZone(sub.Pos);
                 Vector2i peerZone = ZoneSystem.GetZone(peer.m_peer.GetRefPos());
-                int overlap = ZoneSystem.instance.m_activeArea + SnapshotAnchor.AnchorRing;
+                int overlap = ZoneSystem.instance.m_activeArea + SnapshotAnchor.Ring;
                 if (Mathf.Abs(subZone.x - peerZone.x) <= overlap &&
                     Mathf.Abs(subZone.y - peerZone.y) <= overlap)
                 {
@@ -127,10 +140,10 @@ namespace TortalPortal
                 // answer (it is what the server runs around every peer): it creates the zone's vegetation
                 // and location ZDOs without keeping instances. One zone per send tick - SpawnZone is
                 // synchronous - and the new ZDOs join the very same FindSectorObjects sweep below.
-                for (int y = subZone.y - SnapshotAnchor.AnchorRing; y <= subZone.y + SnapshotAnchor.AnchorRing; y++)
+                for (int y = subZone.y - SnapshotAnchor.Ring; y <= subZone.y + SnapshotAnchor.Ring; y++)
                 {
                     bool spawnedOne = false;
-                    for (int x = subZone.x - SnapshotAnchor.AnchorRing; x <= subZone.x + SnapshotAnchor.AnchorRing; x++)
+                    for (int x = subZone.x - SnapshotAnchor.Ring; x <= subZone.x + SnapshotAnchor.Ring; x++)
                     {
                         Vector2i z = new Vector2i(x, y);
                         if (!ZoneSystem.instance.IsZoneGenerated(z) &&
@@ -144,7 +157,7 @@ namespace TortalPortal
                 }
 
                 TempSectorZdos.Clear();
-                __instance.FindSectorObjects(subZone, SnapshotAnchor.AnchorRing, 0, TempSectorZdos);
+                __instance.FindSectorObjects(subZone, SnapshotAnchor.Ring, 0, TempSectorZdos);
                 foreach (ZDO zdo in TempSectorZdos)
                 {
                     if (peer.ShouldSend(zdo)) toSync.Add(zdo);
