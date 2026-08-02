@@ -456,7 +456,8 @@ namespace TortalPortal
                     bool ready = zdoCount > 0 &&
                                  zdoCount == lastZdoCount &&
                                  ZNetScene.instance.IsAreaReady(pos) &&
-                                 !Heightmap.HaveQueuedRebuild(pos, AnchorSettleRadiusMeters);
+                                 !Heightmap.HaveQueuedRebuild(pos, AnchorSettleRadiusMeters) &&
+                                 SnapshotAnchor.DistantTerrainReady;
                     lastZdoCount = zdoCount;
 
                     settledStreak = ready ? settledStreak + 1 : 0;

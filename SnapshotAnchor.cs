@@ -36,17 +36,84 @@ namespace TortalPortal
         private static bool _active;
         private static Vector3 _position;
 
+        // The anchor's own horizon. Vanilla draws far mountains and coastlines with TerrainLod - a 2400m
+        // carpet of low-res heightmap meshes that follows the PLAYER's camera - so a snapshot taken 5km
+        // away sees past its little 3x3 of real zones into black void (painfully obvious from any
+        // mountaintop). A second, temporary TerrainLod pinned to the anchor gives the photograph the same
+        // horizon the player would see standing there, without ever touching the player's own. Built
+        // fresh rather than cloned: the lod meshes are CHILDREN of the component's GameObject, so
+        // Instantiate would bring nine orphaned copies along.
+        private static TerrainLod _distantLod;
+
         public static bool IsActive => _active;
+
+        // True once the anchor's horizon meshes have built (they bake on the HeightmapBuilder's worker
+        // thread), or when there is no rig at all - absence degrades to the old void horizon, not a stall.
+        public static bool DistantTerrainReady =>
+            _distantLod == null || _distantLod.m_heightmapState == TerrainLod.HeightmapState.Done;
 
         public static void Set(Vector3 position)
         {
             _position = position;
             _active = true;
+            CreateDistantLod(position);
         }
 
         public static void Clear()
         {
             _active = false;
+            if (_distantLod != null)
+            {
+                try { UnityEngine.Object.Destroy(_distantLod.gameObject); }
+                catch (Exception ex) { Plugin.Log.LogError($"TortalPortal: tearing down the anchor's horizon failed (non-fatal). Reason: {ex}"); }
+                _distantLod = null;
+            }
+        }
+
+        private static void CreateDistantLod(Vector3 position)
+        {
+            try
+            {
+                // The scene's own rig donates its settings and material. Absent (menus, odd scenes) the
+                // photo simply keeps the void horizon it had before this existed.
+                TerrainLod original = null;
+                foreach (TerrainLod t in UnityEngine.Object.FindObjectsOfType<TerrainLod>())
+                {
+                    if (t != _distantLod) { original = t; break; }
+                }
+                if (original == null) return;
+
+                // Inactive while configuring: OnEnable is what builds the child meshes, and it must run
+                // with the copied settings (a default material of null would build nine invisible meshes).
+                GameObject go = new GameObject("TortalPortal_AnchorTerrainLod");
+                go.SetActive(false);
+                TerrainLod lod = go.AddComponent<TerrainLod>();
+                lod.m_terrainSize = original.m_terrainSize;
+                lod.m_regionsPerAxis = original.m_regionsPerAxis;
+                lod.m_vertexDistance = original.m_vertexDistance;
+                lod.m_material = original.m_material;
+                // Never re-follow the player's camera; this rig belongs to the anchor alone.
+                lod.m_updateStepDistance = float.MaxValue;
+                go.SetActive(true);
+
+                // Aim it at the anchor and demand one rebuild - the same grid-snap vanilla applies. Its
+                // Update then queues the bakes and flips m_heightmapState to Done when the carpet is laid.
+                float vd = Mathf.Max(1f, Mathf.Round(lod.m_vertexDistance));
+                lod.m_lastPoint = new Vector3(Mathf.Round(position.x / vd) * vd, 0f, Mathf.Round(position.z / vd) * vd);
+                foreach (TerrainLod.HeightmapWithOffset h in lod.m_heightmaps)
+                {
+                    h.m_state = TerrainLod.HeightmapState.NeedsRebuild;
+                }
+                lod.m_heightmapState = TerrainLod.HeightmapState.NeedsRebuild;
+
+                _distantLod = lod;
+            }
+            catch (Exception ex)
+            {
+                // The shot can still be taken - it just gets the old empty horizon.
+                _distantLod = null;
+                Plugin.Log.LogError($"TortalPortal: building the anchor's horizon failed (non-fatal, photo will lack distant terrain). Reason: {ex}");
+            }
         }
 
         // Called by the waiting snapshot coroutine every tick, mirroring what vanilla's CreateLocalZones
