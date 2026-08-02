@@ -33,16 +33,16 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.1.2",
-            // Pinned to the CURRENT version deliberately: every client on a server must run exactly this
-            // build or newer.
+            CurrentVersion = "1.2.0",
+            // A step BEHIND the current version for the first time since 1.1.2, and deliberately so again:
+            // the rule is "raise the floor when a mixed table would play differently", not "raise it every
+            // release". 1.2.0's remote snapshots run entirely on the hosting player - a 1.1.2 client
+            // neither sees nor does anything new - so 1.1.2 stays welcome.
             //
-            // It was 1.0.1 - the version that introduced the portal index, whose format has not changed since
-            // - on the reasoning that an older client would merely miss features it did not have anyway.
-            // That reasoning holds for the wire format and not for the experience: 1.1.x changed what a click
-            // on a map marker DOES, when the destination window opens, whether the keyboard is captured, and
-            // which portal is highlighted. A mixed table means players describing different behaviour to each
-            // other and neither of them wrong, which is far harder to diagnose than a refused connection.
+            // The 1.1.x floor exists because 1.1.x changed what a click on a map marker DOES, when the
+            // destination window opens, whether the keyboard is captured, and which portal is highlighted.
+            // A mixed table means players describing different behaviour to each other and neither of them
+            // wrong, which is far harder to diagnose than a refused connection.
             //
             // Raising this is a BREAKING change for anyone still on an older build: they are turned away at
             // the handshake with a version-mismatch message rather than let in to desync. Every client has to
@@ -79,6 +79,7 @@ namespace TortalPortal
         public static ConfigEntry<Color> uiGoldColour;
         public static ConfigEntry<bool> enablePortalCameraShot;
         public static ConfigEntry<int> snapshotRefreshIntervalMinutes;
+        public static ConfigEntry<bool> remoteSnapshots;
         public static ConfigEntry<float> portalIndexRefreshSeconds;
         public static ConfigEntry<float> uiTextScale;
         public static ConfigEntry<int> uiFontSizeDelta;
@@ -160,6 +161,8 @@ namespace TortalPortal
                 "The metal of the window frames. The deep shadow and bright highlight tones are derived from this one colour, so silver, bronze or verdigris is a single change. Applies live.");
             enablePortalCameraShot = config.Bind("3 - Features", "EnablePortalCameraShot", true, "If true, takes a camera snapshot when a portal is placed for the UI preview.");
             snapshotRefreshIntervalMinutes = config.Bind("3 - Features", "SnapshotRefreshIntervalMinutes", 5, "Interval in minutes for the background coroutine to re-photograph portals that already have a picture, so a destination that has been built up or burnt down does not keep showing the old view. 5 rather than 30: a portal only gets photographed while a player is standing near it anyway, so a long interval mostly meant missing the chance entirely. Set to 0 to disable refreshes - portals with no picture at all are still filled in regardless.");
+            remoteSnapshots = config.Bind("3 - Features", "EnableRemoteSnapshots", true,
+                "Let the hosting player's game quietly load the world around ONE never-photographed portal at a time - out where nobody is standing - photograph it and unload it again, so portals nobody visits still get their picture. Only the machine hosting the world can do this (a dedicated server draws nothing, and its clients are never sent the far ZDOs), and it costs that host a few seconds of background zone loading per portal. Off returns to photographs only being taken where somebody actually walks.");
             portalIndexRefreshSeconds = config.Bind("3 - Features", "PortalIndexRefreshSeconds", 10f,
                 new ConfigDescription("How often the server rescans the world for portals and republishes the destination list. Renames, new portals and demolitions show up within this window. Only republished when something actually changed.",
                                       new AcceptableValueRange<float>(5f, 300f)));
@@ -205,6 +208,7 @@ namespace TortalPortal
             configSync.AddConfigEntry(enableCustomVFX);
             configSync.AddConfigEntry(enablePortalCameraShot);
             configSync.AddConfigEntry(snapshotRefreshIntervalMinutes);
+            configSync.AddConfigEntry(remoteSnapshots);
             configSync.AddConfigEntry(portalIndexRefreshSeconds);
 
             // Pushes anything that moved into its new home, stamps the file and saves it.

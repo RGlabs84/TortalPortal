@@ -1,5 +1,14 @@
 # Changelog - TortalPortal
 
+## [1.2.0]
+
+### The camera walks the world on its own
+- **Added:** **Remote snapshots** — portals nobody visits finally get their photograph. Until now a destination picture could only be taken where a player happened to be standing, because the world simply does not exist anywhere else: Valheim builds terrain and objects only around players. The hosting player's game now quietly *anchors* one never-photographed portal at a time — out where nobody is — streams in a 3×3-zone patch of world around it, takes the shot, and lets it all unload again seconds later. One portal per backfill tick, round-robin so a slow-loading one cannot starve the rest, and the loading is spread thin enough that the host should never feel it.
+- **Added:** `EnableRemoteSnapshots` (synced, default **on**). Only the machine *hosting* the world can take these — a dedicated server draws nothing, and its clients are never sent the far ZDOs, so on dedicated servers the walk-near-it rule still applies for now. That lift is a planned next phase.
+- Portals loaded around players are photographed exactly as before; the anchor pass only ever touches portals nobody is near.
+
+> Compatibility: everything new runs on the hosting player alone, so `1.1.2` clients connect and play unaffected — the minimum required version stays `1.1.2`.
+
 ## [1.1.2]
 
 ### ⚠️ Every client must now match the server
