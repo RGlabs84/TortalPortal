@@ -2,6 +2,9 @@
 
 ## [1.2.0]
 
+### ⚠️ Every client must match the server again
+- **Changed:** The minimum required version rises from `1.1.2` to **`1.2.0`**. The far photographs and live previews below run through a server RPC that older builds never registered, so a `1.1.2` client at a `1.2.0` table would keep a silently dead album — photos never refresh, previews never go live, and nothing errors. The floor exists to turn exactly that into a clear version-mismatch message at the door instead. **Update every client alongside the server.**
+
 ### The album goes live
 - **Added:** Open a portal's picture full-size and the stored photograph gives way to a **live view of the destination** — real weather, real time of day, swaying trees, rendered by your own game through the same anchor the background camera uses. The still stands in while the far world streams in (`going live...` in the footer, then `LIVE`), and closing the album unloads it all within seconds. Works on hosted worlds and dedicated servers alike; nothing new crosses the wire.
 - **Added:** `EnableLivePreviews` (synced, default **on**) — the server's word is final. The feed's lifecycle is a deadman switch: any way of leaving the album — closing it, the window, the world, or a UI error — starves the feed of its keep-alive and it tears itself down within half a second. There is no exit path to forget.
@@ -23,12 +26,17 @@ All server-synced — the server's values are the law of the table — and every
 - Portals loaded around players are photographed exactly as before; the anchor pass only ever touches portals nobody is near.
 - Graceful on a mixed setup: against a server still running pre-1.2 (which does not know the subscription), a client burns three quiet timeouts, logs one clear warning, and stops for the session — the walk-near-it rule simply applies as before.
 - **Fixed:** Far shots on dedicated servers could photograph a **half-loaded scene** — missing terrain, bald ground where trees hadn't arrived. The readiness test judged only the objects that had *arrived so far*, so mid-stream an incomplete area read as complete. The camera now waits until the area is genuinely **settled** — no new objects arriving for a sustained stretch, everything instanced, and no terrain mesh still building — and if it never settles within the budget it *skips the shot entirely*: a missing photograph heals itself on a later lap, while a photograph of missing terrain would have stood forever.
-- **Changed:** The backfill shutter ticks **~16% faster** (10.5 s, from 12.5 s), and snapshots are saved at **JPG quality 85** (from 75) — noticeably cleaner skies and foliage for roughly a third more bytes per picture. Resolution stays 1280×720; the preview panel never shows more.
+- **Changed:** The backfill shutter ticks **~16% faster** (10.5 s, from 12.5 s), and snapshots are saved at **JPG quality 85** (from 75) — noticeably cleaner skies and foliage for roughly a third more bytes per picture. Resolution ships at 1280×720 and is now a dial — see `CameraResolution` above.
 - **Fixed:** Far shots of **never-visited wilderness came back treeless** — complete terrain, no foliage. Not a loading-time problem: vegetation only comes into existence when a zone is first *generated*, and nobody had ever generated those zones, so there were no trees to send no matter how long the camera waited. The server now ghost-generates the subscribed zones on demand — the same mechanism it already runs around every player — so the trees exist, arrive, and are stood up before the shutter fires. (Grass is the one thing far photos still lack: the engine only sprinkles grass around the *player's* camera. Trees, bushes and rocks are all real objects and all present.)
 - **Fixed:** `tortal_scatterclear` from a client only removed the portals loaded around that client and told you to run it on the host — unhelpful advice on a dedicated server. The command now also asks the **server** to sweep the whole world (admin-gated against the server's adminlist) and reports the count back to your console.
 - **Added:** The far pass narrates itself in the log — one line when it anchors a portal, one when the photograph lands (with elapsed seconds), one when it skips. A silent success was indistinguishable from a pass that never ran.
 - **Fixed:** Far photographs had a **black void past the loaded area** — brutal from any mountaintop. The distant mountains and coastlines you see in normal play are a low-detail terrain carpet the engine keeps wrapped around the *player's* camera; the snapshot camera, kilometres away, had none. Each far shot now raises its own temporary copy of that carpet pinned to the anchor, waits for it to bake, photographs a proper horizon, and tears it down with everything else. The player's own horizon is never touched.
 - **Fixed:** A portal unloaded in the single frame between being chosen for a photograph and the shutter firing crashed the capture (harmlessly, but with an error in the log). Seen once in a 100-portal scatter test; the shot is now skipped and retaken next pass.
+
+### Seed a world with portals
+The commands every 1.2.0 feature above was shaken down with turn out to be a world-building tool in their own right, so they are documented ones now. Both are cheat commands: enable `devcommands` in the console first, which on a server means being on its adminlist.
+- **`tortal_scatter [count] [radius]`** — raises portals at random spots across the world (default 25 within 2 000 m; up to 500, radius up to 10 000 m). Spots are spread evenly across the disc rather than crowding the middle, each gate is named for its biome and registered in the index like any hand-built portal, and every 5th one is PIN-locked with `1234` so lock testing has subjects too. Paired with remote snapshots this **seeds a world**: scatter a network across the map on day one and the camera walks it on its own, so the server opens with a fully photographed portal network no player has ever visited.
+- **`tortal_scatterclear`** — removes every portal `tortal_scatter` raised and nothing else; scattered gates carry a marker, and hand-built portals are never touched. Run from a client it sweeps what is loaded around you *and* asks the server to sweep the whole world (admin-gated against the server's adminlist), reporting the total back to your console.
 
 ### The gateway goes gold
 Settled by eye in-game, like 1.1.2's tuning round. Existing config files keep their own values — these are the *defaults*.
@@ -36,7 +44,8 @@ Settled by eye in-game, like 1.1.2's tuning round. Existing config files keep th
 - `VFXBrightness` `0.64` → **`0.35`** — the warm colour carries more apparent light than the mint did at the same value, and glared where the green had merely glowed.
 - `PinColour` stays hard green: a small mark on a busy map wants to shout, which is the opposite of what the gateway wants.
 
-> Compatibility: everything new runs on the hosting player alone, so `1.1.2` clients connect and play unaffected — the minimum required version stays `1.1.2`.
+### Housekeeping
+- **Removed:** a dormant 1.0.0-era visual loader that was superseded by the procedural gateway before it ever shipped, yet still registered a patch on every launch. Nothing called it and nothing changes in play — but it was the one piece of code implying a dependency on anything, and now the technical report's opening line ("no bundles, no dependencies") is true to the letter.
 
 ## [1.1.2]
 

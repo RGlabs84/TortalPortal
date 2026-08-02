@@ -45,20 +45,16 @@ namespace TortalPortal
         {
             DisplayName = "Total Portal Control System",
             CurrentVersion = "1.2.0",
-            // A step BEHIND the current version for the first time since 1.1.2, and deliberately so again:
-            // the rule is "raise the floor when a mixed table would play differently", not "raise it every
-            // release". 1.2.0's remote snapshots run entirely on the hosting player - a 1.1.2 client
-            // neither sees nor does anything new - so 1.1.2 stays welcome.
-            //
-            // The 1.1.x floor exists because 1.1.x changed what a click on a map marker DOES, when the
-            // destination window opens, whether the keyboard is captured, and which portal is highlighted.
-            // A mixed table means players describing different behaviour to each other and neither of them
-            // wrong, which is far harder to diagnose than a refused connection.
+            // Raised to match, because 1.2.0 is the first release since the rule was written where a mixed
+            // table genuinely plays differently. The far-photo pass and live previews run through a server
+            // RPC ("TortalPortal_AnchorSectors") that older builds never registered: a 1.1.2 client on a
+            // 1.2.0 server gets a silently dead album - photos never refresh, previews never go live, and
+            // nothing errors. Two players comparing albums would describe different mods. That is exactly
+            // the failure the floor exists to turn into a clear version-mismatch message at the handshake.
             //
             // Raising this is a BREAKING change for anyone still on an older build: they are turned away at
-            // the handshake with a version-mismatch message rather than let in to desync. Every client has to
-            // update alongside the server.
-            MinimumRequiredVersion = "1.1.2"
+            // the handshake rather than let in to desync. Every client has to update alongside the server.
+            MinimumRequiredVersion = "1.2.0"
         };
 
         // Where the migration stamp lives. Named here so ConfigMigration can find it in a raw file that

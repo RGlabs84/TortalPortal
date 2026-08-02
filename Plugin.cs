@@ -23,7 +23,6 @@ namespace TortalPortal
             typeof(PortalBehaviorPatch),
             typeof(SecurityPatch),
             typeof(TamesPatch),
-            typeof(VFXPatch),
             typeof(InputFocusPatch),
             typeof(MessageHudPatch),
             typeof(MapInputPatch),
@@ -46,15 +45,6 @@ namespace TortalPortal
 
             ApplyPatches();
             WireLiveVFXSettings();
-
-            try
-            {
-                VFXPatch.InitBundle();
-            }
-            catch (Exception ex)
-            {
-                Log.LogError($"TortalPortal: VFX bundle failed to load, custom VFX will be disabled. Reason: {ex}");
-            }
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded successfully.");
         }
