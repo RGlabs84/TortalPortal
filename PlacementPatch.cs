@@ -384,6 +384,12 @@ namespace TortalPortal
 
         private static void TakeSnapshotCore(Transform portalTransform)
         {
+            // The routine that got us here waits a frame between choosing the portal and this call, and in
+            // that frame the instance can be unloaded out from under us - the player crossing a zone
+            // boundary mid-walk, or an anchor's world being swept up. Seen exactly once in a 100-portal
+            // scatter test, as an NRE on .position below; a destroyed Transform compares equal to null.
+            if (portalTransform == null) return;
+
             GameObject camObj = null;
             RenderTexture rt = null;
             Texture2D tex = null;

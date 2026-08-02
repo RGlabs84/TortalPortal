@@ -120,7 +120,7 @@ namespace TortalPortal
             menuCloseMargin = config.Bind("3 - Features", "MenuCloseMargin", 1f,
                 new ConfigDescription("Extra metres beyond MenuOpenDistance you have to retreat before an open destination window closes itself. This is the hysteresis that stops the window strobing when you hover right on the boundary.",
                                       new AcceptableValueRange<float>(0f, 5f)));
-            enableCustomVFX = config.Bind("3 - Features", "EnableCustomVFX", true, "Replaces vanilla portal VFX with a custom procedural green runic gateway.");
+            enableCustomVFX = config.Bind("3 - Features", "EnableCustomVFX", true, "Replaces vanilla portal VFX with a custom procedural runic gateway, coloured by VFXColour.");
             // Deliberately NOT server-synced: this is a local visual nudge, not a rule of the world.
             vfxOrbHeightOffset = config.Bind("3 - Features", "VFXOrbHeightOffset", 0f, "Vertical nudge in metres for the rune orb inside the gate. The orb is auto-centred on each portal's own arch, so this is only for fine-tuning.");
             // Also local: when someone's portals light up is their own business. The check is against ANY
@@ -128,14 +128,16 @@ namespace TortalPortal
             vfxWakeDistance = config.Bind("3 - Features", "VFXWakeDistance", 25f,
                 new ConfigDescription("How close, in metres, a player has to be before the rune gateway wakes up. Beyond this the portal sits dormant like vanilla - no rings, no runes, no motes - and it spins up as someone approaches. 25 is far enough that a gate is already alive as it comes into view and you watch it build as you walk in, rather than having it appear beside you.",
                                       new AcceptableValueRange<float>(2f, 50f)));
-            // 0.64 / 0.64 / 3 rather than 1 / 0.9 / 1: the tuned look, settled by eye in-game against the
+            // 0.64 / 0.35 / 3 rather than 1 / 0.9 / 1: the tuned look, settled by eye in-game against the
             // modpack rather than in isolation. Fewer, dimmer particles in the gate itself, and the trailing
             // ribbon packed to the top of its range - the gateway reads as a fine-drawn thing that leaves a
-            // dense wake, instead of a bright cloud that leaves a thin one.
+            // dense wake, instead of a bright cloud that leaves a thin one. Brightness came down again for
+            // 1.2 (0.64 to 0.35) alongside the move to gold: the warm colour carries more apparent light
+            // than the old mint at the same value, and glared where the green had merely glowed.
             vfxIntensity = config.Bind("3 - Features", "VFXIntensity", 0.64f,
                 new ConfigDescription("How MUCH gateway there is: particle density, rune spacing in the swirl and ring thickness all scale with it. Below the default the gate smoulders, above it it roars. How brightly it burns is VFXBrightness, which moves independently.",
                                       new AcceptableValueRange<float>(0.1f, 3f)));
-            vfxBrightness = config.Bind("3 - Features", "VFXBrightness", 0.64f,
+            vfxBrightness = config.Bind("3 - Features", "VFXBrightness", 0.35f,
                 new ConfigDescription("How brightly the rune gateway burns, with no effect on how much of it there is. Lower and the runes smoulder darkly against a night sky; higher and they glare. The particle materials are additive, so this climbs fast - 1.0 blows out against snow and daylight. Applies live to every loaded portal.",
                                       new AcceptableValueRange<float>(0.1f, 3f)));
             vfxSwirlDensity = config.Bind("3 - Features", "VFXSwirlDensity", 3f,
@@ -149,12 +151,15 @@ namespace TortalPortal
 
             // The dials. All local - what colour someone's world glows is their own business, and none of it
             // crosses the wire. BepInEx renders these as colour pickers in ConfigurationManager.
-            // 89FFACFF - a paler, mintier green than the old 4CFF8CFF. At the tuned brightness the deeper
-            // green sat too close to black at the edges of the swirl.
-            vfxColour = config.Bind("5 - Colours", "VFXColour", new Color(0.537f, 1.000f, 0.675f, 1f),
+            // FFD24CFF - warm gold, the 1.2 look, settled in-game like the rest of the tuned defaults. The
+            // greens (4CFF8C, then 89FFAC mint) always argued with vanilla's own warm light in the arch;
+            // gold agrees with it, so the gateway and the piece finally read as one object without needing
+            // VFXTintPortalFrame turned on.
+            vfxColour = config.Bind("5 - Colours", "VFXColour", new Color(1.000f, 0.824f, 0.298f, 1f),
                 "The rune gateway's colour - veil, rings, sigil, motes and the swirl trail all draw from this.");
-            // 12FF21FF - a hard, saturated green. The pin is a small mark on a busy map and wants to shout,
-            // which is the opposite of what the gateway colour wants, so the two dials part company here.
+            // 12FF21FF - a hard, saturated green, kept even now the gateway has gone gold. The pin is a
+            // small mark on a busy map and wants to shout, which is the opposite of what the gateway colour
+            // wants, so the two dials part company here.
             pinColour = config.Bind("5 - Colours", "PinColour", new Color(0.071f, 1.000f, 0.129f, 1f),
                 "The Rune map pin's colour (glyph and ring). Ignored for vanilla icons and Custom PNGs, which bring their own colours.");
             uiGoldColour = config.Bind("5 - Colours", "UIGoldColour", new Color(0.80f, 0.62f, 0.26f, 1f),

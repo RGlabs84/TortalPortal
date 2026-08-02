@@ -6,6 +6,13 @@
 - **Added:** **Remote snapshots** — portals nobody visits finally get their photograph. Until now a destination picture could only be taken where a player happened to be standing, because the world simply does not exist anywhere else: Valheim builds terrain and objects only around players. The hosting player's game now quietly *anchors* one never-photographed portal at a time — out where nobody is — streams in a 3×3-zone patch of world around it, takes the shot, and lets it all unload again seconds later. One portal per backfill tick, round-robin so a slow-loading one cannot starve the rest, and the loading is spread thin enough that the host should never feel it.
 - **Added:** `EnableRemoteSnapshots` (synced, default **on**). Only the machine *hosting* the world can take these — a dedicated server draws nothing, and its clients are never sent the far ZDOs, so on dedicated servers the walk-near-it rule still applies for now. That lift is a planned next phase.
 - Portals loaded around players are photographed exactly as before; the anchor pass only ever touches portals nobody is near.
+- **Fixed:** A portal unloaded in the single frame between being chosen for a photograph and the shutter firing crashed the capture (harmlessly, but with an error in the log). Seen once in a 100-portal scatter test; the shot is now skipped and retaken next pass.
+
+### The gateway goes gold
+Settled by eye in-game, like 1.1.2's tuning round. Existing config files keep their own values — these are the *defaults*.
+- `VFXColour` `89FFACFF` mint → **`FFD24CFF`** warm gold. The greens always argued with vanilla's own warm light in the arch; gold agrees with it, so the gateway and the piece read as one object without needing `VFXTintPortalFrame`.
+- `VFXBrightness` `0.64` → **`0.35`** — the warm colour carries more apparent light than the mint did at the same value, and glared where the green had merely glowed.
+- `PinColour` stays hard green: a small mark on a busy map wants to shout, which is the opposite of what the gateway wants.
 
 > Compatibility: everything new runs on the hosting player alone, so `1.1.2` clients connect and play unaffected — the minimum required version stays `1.1.2`.
 
