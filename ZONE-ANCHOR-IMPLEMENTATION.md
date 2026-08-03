@@ -90,7 +90,7 @@ static void Prefix(List<ZDO> currentNearObjects)   // parameter name must match 
         Mathf.Abs(anchorZone.y - refZone.y) <= overlap) return;
 
     // FindSectorObjects APPENDS (it never clears), which is exactly what we want here.
-    ZDOMan.instance.FindSectorObjects(anchorZone, Ring, 0, currentNearObjects);
+    ZDOMan.instance.FindSectorObjects(anchorZone, Ring, ZoneSystem.instance.m_activeDistantArea, currentNearObjects);
 }
 ```
 
@@ -125,7 +125,7 @@ static void Postfix(ZDOMan __instance, ZDOMan.ZDOPeer peer, List<ZDO> toSync)
     // (same overlap guard as mechanism 2, vs the peer's own refpos)
 
     temp.Clear();
-    __instance.FindSectorObjects(ZoneSystem.GetZone(sub.Pos), Ring, 0, temp);
+    __instance.FindSectorObjects(ZoneSystem.GetZone(sub.Pos), Ring, ZoneSystem.instance.m_activeDistantArea, temp);
     foreach (ZDO zdo in temp)
         if (peer.ShouldSend(zdo)) toSync.Add(zdo);
 }
@@ -182,6 +182,62 @@ Give the anchor its own:
 
 The player's own horizon is never touched — the two rigs coexist (heights come from the same
 `WorldGenerator`, so overlap renders the same way vanilla's own LOD-under-real-terrain overlap does).
+
+---
+
+## ⚠️ The distant ring — a bug an earlier revision of this document shipped with
+
+Both sweeps above pass a **distant ring** as `FindSectorObjects`' third argument. This document used
+to show **`0`** there, and TortalPortal shipped `0` for several builds. It is wrong, and it fails
+silently.
+
+```csharp
+// ZDOMan.FindSectorObjects, abridged
+for (int l = area + 1; l <= area + distantArea; l++)   // distantArea = 0  ->  body never runs
+    FindDistantObjects(...);
+```
+
+`0` does not mean "a modest distance". The loop runs from `area + 1` to `area + 0`, so **not one
+distant object is ever requested.** Everything inside the near ring arrives perfectly, which is what
+makes it so hard to spot — the anchor looks like it works. On a dedicated server it costs twice
+over: the client holds nothing it was not sent, and the server-side sweep was passing `0` too.
+
+Symptom to recognise: **a destination that is fully loaded, correctly lit, correctly weathered, and
+still reads as an empty stage set.** Pass `ZoneSystem.instance.m_activeDistantArea` — the ring
+vanilla gives the player's own camera — in both places.
+
+---
+
+## Mechanism 6 — Presence: making the area *inhabited*
+
+The mechanisms above make an area exist and draw. They do not populate it, because Valheim gates
+creature spawning on a **`Player`**, not on a loaded zone. `SpawnSystem` is the whole story:
+
+```csharp
+UpdateSpawning()        // needs m_nview.IsValid() && m_nview.IsOwner() && Player.m_localPlayer != null
+GetPlayersInZone(list)  // Player.GetAllPlayers() filtered by InsideZone(pos) -> +-32m of zone centre
+if (list.Count == 0) return;                    // <- the actual blocker at an anchor
+FindBaseSpawnPoint(spawn, list, out centre, ..) // dart 40-80m around one of those players
+```
+
+Everything downstream is player-free — `IsSpawnPointGood` tests biome, blocked-ness, altitude and
+tilt only. So **a presence in the zone is the entire feature.**
+
+- **Do not fabricate a `Player`.** It needs a `ZNetView` to survive its own `Awake`, and a networked
+  `Player` replicates — every other client gets a ghost standing in your anchored zone.
+- **Patch the two methods that ask instead.** A postfix on `GetPlayersInZone` adding the local
+  player *only when the list came back empty* (a real player standing there is already the right
+  answer), plus a prefix on `FindBaseSpawnPoint` running vanilla's own twenty-dart loop centred on
+  the anchor. Without the second, the first is useless: vanilla throws darts around the viewer's
+  real position and `IsSpawnPointGood` rejects all twenty for wrong biome.
+- **Ownership:** `UpdateSpawning` runs only for the owner of the zone-control object, which at an
+  anchor is the server or nobody. A prefix calling `nview.ClaimOwnership()` covers it — and note
+  what that means: the anchoring client becomes the simulator for a place it is not standing in.
+
+> **This is where a rendering feature becomes a gameplay feature.** The creatures are real, written
+> to the world, and they outlive the view that made them. Ship it **off by default**, and restrict
+> the spawn ring — the anchor ring dial may reach 25 zones, and stocking all of them from a glance
+> at a photograph is not a defensible default.
 
 ---
 
@@ -275,7 +331,11 @@ subscribe, then deltas. Budget accordingly: the shipped mod holds **one** anchor
 | Objects alive | `ZNetScene.CreateObjects(List<ZDO>, List<ZDO>)` | Harmony **prefix**, append to first list |
 | Data to client | `ZDOMan.CreateSyncList(ZDOPeer, List<ZDO>)` | Harmony **postfix** on server, append via `ShouldSend` |
 | Content exists | `ZoneSystem.SpawnZone(z, SpawnMode.Ghost, out _)` | direct call, server, one per send tick |
+| Distant scenery | third arg of `FindSectorObjects` = `m_activeDistantArea`, **never 0** | see the warning above |
 | Horizon | `TerrainLod` built fresh + pinned | scene object, no patch |
+| Somebody is here | `SpawnSystem.GetPlayersInZone` | Harmony **postfix**, add local player only if empty |
+| Where they are | `SpawnSystem.FindBaseSpawnPoint` | Harmony **prefix**, re-run vanilla's loop around the anchor |
+| Zone simulates | `SpawnSystem.UpdateSpawning` | Harmony **prefix**, `nview.ClaimOwnership()` |
 | Readiness | `ZNetScene.IsAreaReady` + `Heightmap.HaveQueuedRebuild` + count stability | direct calls |
 | Transport | `ZRoutedRpc.Register<Vector3>` / targetless `InvokeRoutedRPC` | vanilla RPC layer |
 
