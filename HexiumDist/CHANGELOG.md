@@ -1,5 +1,13 @@
 # Changelog - TortalPortal
 
+## [1.2.1]
+
+### 📖 The manual catches up to the mod
+- **Changed:** The README was rewritten top to bottom — reordered around **Features**, **Instructions** and **How-To** sections, with a table of contents, and checked line by line against the shipped code rather than against memory. It had gone stale enough to be visibly wrong in two places: `VFXBrightness`'s documented default (`0.64`) hadn't followed the gold retune down to its real value (`0.35`), and the selected map marker was still described as drawn "twice the size," a leftover from before 1.1.2 replaced that with the actual current behaviour (30% larger, and red).
+- **Added:** A dedicated step-by-step walkthrough for assigning a custom map pin icon (`TortalPortalPin.png`) — previously just one line in a config table, now its own How-To section with the session-caching caveat (the file is read once per launch) spelled out.
+- **Added:** Default hex values for `VFXColour`, `PinColour` and `UIGoldColour` in the config reference, and the missing default (`10`) for `PortalIndexRefreshSeconds`.
+- No code changed and nothing about the mod's behaviour is different — every fact below still describes v1.2.0. This version exists only so the corrected README ships under its own number instead of silently overwriting the 1.2.0 listing.
+
 ## [1.2.0]
 
 ### ⚠️ Every client must match the server again
