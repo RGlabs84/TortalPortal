@@ -40,6 +40,7 @@ namespace TortalPortal
             public string SearchKey;
             public bool Locked;
             public bool Fav;
+            public string Icon;
             public DetailState Details;
             public Minimap.PinData MapPin;
         }
@@ -61,6 +62,10 @@ namespace TortalPortal
         private string _configName = "";
         private string _configPin = "";
         private bool _configHasPin;
+
+        // The portal's own map icon, as a name in TortalPinIcon's library. Empty means "leave it to whoever is
+        // looking at the map", which is what every portal holds until somebody picks one.
+        private string _configIcon = "";
 
         // The quick PIN modal: the small "PIN, Enter, gone" window that locked portals get when launched
         // from the favorites strip or a map marker, instead of hauling the full window out. While it is up
@@ -398,6 +403,7 @@ namespace TortalPortal
             _instance._configName = zdo.GetString(ZDOVars.s_tag);
             _instance._configPin = zdo.GetString("PortalPIN");
             _instance._configHasPin = !string.IsNullOrEmpty(_instance._configPin);
+            _instance._configIcon = zdo.GetString(TortalPinIcon.ZdoKey) ?? "";
 
             if (Minimap.instance != null) Minimap.instance.SetMapMode(Minimap.MapMode.None);
         }
@@ -477,7 +483,8 @@ namespace TortalPortal
                     Biome = WorldGenerator.instance != null ? WorldGenerator.instance.GetBiome(pos) : Heightmap.Biome.None,
                     Distance = Vector3.Distance(origin, pos),
                     Locked = src.Locked,
-                    Fav = Favorites.IsFavorite(src.Id)
+                    Fav = Favorites.IsFavorite(src.Id),
+                    Icon = src.Icon
                 };
 
                 e.SearchKey = tag.ToLowerInvariant();
@@ -894,15 +901,22 @@ namespace TortalPortal
                 // Our own pins ride on a vanilla pin type and then have their sprite swapped: AddPin stamps
                 // m_icon from the type, and the map's UI element reads pin.m_icon when it is built - so a
                 // swap made here, before the next pin update, is all it takes.
-                Minimap.PinType icon = vanillaIcon ? (Minimap.PinType)(int)chosen : Minimap.PinType.Icon4;
-                Sprite customSprite = vanillaIcon ? null : TortalPinIcon.Get(chosen);
+                Minimap.PinType fallbackType = vanillaIcon ? (Minimap.PinType)(int)chosen : Minimap.PinType.Icon4;
+                Sprite fallbackSprite = vanillaIcon ? null : TortalPinIcon.Get(chosen);
 
                 foreach (PortalEntry e in _entries)
                 {
-                    e.MapPin = Minimap.instance.AddPin(e.Pos, icon, e.Tag, false, false);
+                    // A portal's own icon wins, and quietly loses to the player's setting when this client has
+                    // no such file - somebody marking their gates with a modpack's icons should not blank the
+                    // map for a player who does not run it.
+                    Sprite own = TortalPinIcon.GetByName(e.Icon);
+                    Sprite sprite = own ?? fallbackSprite;
+                    Minimap.PinType type = own != null ? Minimap.PinType.Icon4 : fallbackType;
+
+                    e.MapPin = Minimap.instance.AddPin(e.Pos, type, e.Tag, false, false);
                     if (e.MapPin != null)
                     {
-                        if (customSprite != null) e.MapPin.m_icon = customSprite;
+                        if (sprite != null) e.MapPin.m_icon = sprite;
                         _pins.Add(e.MapPin);
                     }
                 }
@@ -979,6 +993,16 @@ namespace TortalPortal
                         ? new Vector3(SelectedPinScale, SelectedPinScale, 1f)
                         : Vector3.one;
                     if (pin.m_uiElement.localScale != wanted) pin.m_uiElement.localScale = wanted;
+                }
+
+                // Vanilla sizes every marker as a SQUARE - m_pinSizeLarge on both axes - because every icon it
+                // ships is square, so nothing ever needed this flag. A custom PNG has no such guarantee, and
+                // without this a wide image is stretched to fill the square instead of fitting inside it.
+                // Set on every pin every pass for the same reason the scale is: the element is rebuilt from
+                // the prefab whenever the marker scrolls back into view.
+                if (pin.m_iconElement != null && !pin.m_iconElement.preserveAspect)
+                {
+                    pin.m_iconElement.preserveAspect = true;
                 }
 
                 if (!isSelected) continue;
@@ -1308,6 +1332,24 @@ namespace TortalPortal
             // _previewExpanded stays true - that is the whole point.
         }
 
+        // Empty string first - "no icon of its own" is the default and belongs at the head of the cycle - then
+        // every icon installed here. A name the portal already carries but this client has no file for is kept
+        // in the list rather than dropped: opening the window on a friend's portal must not silently strip a
+        // choice made by somebody whose modpack has the picture.
+        private List<string> ConfigIconChoices()
+        {
+            List<string> choices = new List<string> { "" };
+            choices.AddRange(TortalPinIcon.Names);
+            if (!string.IsNullOrEmpty(_configIcon) && !choices.Contains(_configIcon)) choices.Add(_configIcon);
+            return choices;
+        }
+
+        private static string ConfigIconLabel(string icon, Sprite resolved)
+        {
+            if (string.IsNullOrEmpty(icon)) return "Default";
+            return resolved != null ? icon : $"{icon}  <color={TortalUITheme.HexMuted}>(not installed here)</color>";
+        }
+
         private void DrawConfigUI()
         {
             float w = Mathf.Min(Screen.width - 80f, TortalUITheme.S(540f));
@@ -1327,6 +1369,41 @@ namespace TortalPortal
             GUI.SetNextControlName(ConfigNameFieldName);
             _configName = GUI.TextField(new Rect(body.x, y, body.width, fieldH), _configName, 20, TortalUITheme.Field);
             y += fieldH + 16f;
+
+            // Hidden entirely when this player has no custom icons installed and the portal carries none - a
+            // picker offering one choice is furniture.
+            List<string> iconChoices = ConfigIconChoices();
+            if (iconChoices.Count > 1)
+            {
+                GUI.Label(new Rect(body.x, y, body.width, lineH), "Map icon", TortalUITheme.Header);
+                y += lineH + 4f;
+
+                float arrowW = TortalUITheme.S(34f);
+                Rect prev = new Rect(body.x, y, arrowW, fieldH);
+                Rect next = new Rect(body.x + fieldW - arrowW, y, arrowW, fieldH);
+                Rect middle = new Rect(prev.xMax + 4f, y, next.x - prev.xMax - 8f, fieldH);
+
+                int idx = iconChoices.IndexOf(_configIcon ?? "");
+                if (idx < 0) idx = 0;
+                if (GUI.Button(prev, "<", TortalUITheme.Button)) idx = (idx - 1 + iconChoices.Count) % iconChoices.Count;
+                if (GUI.Button(next, ">", TortalUITheme.Button)) idx = (idx + 1) % iconChoices.Count;
+                _configIcon = iconChoices[idx];
+
+                GUI.Label(middle, GUIContent.none, TortalUITheme.Field);
+
+                float swatch = fieldH - TortalUITheme.S(8f);
+                Rect swatchRect = new Rect(middle.x + 4f, middle.y + (fieldH - swatch) * 0.5f, swatch, swatch);
+                Sprite preview = TortalPinIcon.GetByName(_configIcon);
+                if (preview != null && preview.texture != null)
+                {
+                    // ScaleToFit rather than stretched, matching how the marker itself is now drawn.
+                    GUI.DrawTexture(swatchRect, preview.texture, ScaleMode.ScaleToFit, true);
+                }
+
+                Rect nameRect = new Rect(swatchRect.xMax + 6f, middle.y, middle.xMax - swatchRect.xMax - 10f, fieldH);
+                GUI.Label(nameRect, ConfigIconLabel(_configIcon, preview), TortalUITheme.Value);
+                y += fieldH + 16f;
+            }
 
             if (GUI.Button(new Rect(body.x, y, fieldW, fieldH),
                            _configHasPin ? "PIN lock:  ON" : "PIN lock:  OFF", TortalUITheme.Button))
@@ -1350,9 +1427,17 @@ namespace TortalPortal
             if (GUI.Button(save, "Save", TortalUITheme.Primary))
             {
                 string finalPin = _configHasPin ? _configPin : "";
-                ZDO zdo = CurrentSourcePortal.GetComponent<ZNetView>().GetZDO();
+                ZNetView nview = CurrentSourcePortal.GetComponent<ZNetView>();
+                ZDO zdo = nview.GetZDO();
+
+                // A write to a ZDO this peer does not own is discarded at the next sync, which is what an
+                // admin editing somebody else's gate would hit - the window would close on a saved message
+                // and nothing would have changed.
+                if (!nview.IsOwner()) nview.ClaimOwnership();
+
                 zdo.Set(ZDOVars.s_tag, _configName);
                 zdo.Set("PortalPIN", finalPin);
+                zdo.Set(TortalPinIcon.ZdoKey, _configIcon ?? "");
                 Player.m_localPlayer.Message(MessageHud.MessageType.Center, "Portal configuration saved.");
                 HideUI();
                 return;
@@ -1375,10 +1460,34 @@ namespace TortalPortal
         // ever want the byte[] overload. Binding it reflectively sidesteps compile-time overload
         // resolution entirely; Valheim's actual Mono runtime resolves it fine at runtime.
         private static MethodInfo _loadImageMethod;
+        private static MethodInfo _loadImageNonReadableMethod;
 
-        // Internal rather than private: TortalPinIcon loads the admin's custom pin PNG through the same shim.
+        // Internal rather than private: TortalPinIcon loads the custom pin PNGs through the same shim.
         internal static void LoadImageViaReflection(Texture2D tex, byte[] data)
         {
+            LoadImageViaReflection(tex, data, markNonReadable: false);
+        }
+
+        // markNonReadable drops the CPU-side copy of the picture once it is on the card, halving what an image
+        // costs to keep. Only safe where the pixels are never read back afterwards, which is why it is opt-in:
+        // the map icons only ever get drawn, while a portal snapshot is handled as data.
+        internal static void LoadImageViaReflection(Texture2D tex, byte[] data, bool markNonReadable)
+        {
+            if (markNonReadable)
+            {
+                if (_loadImageNonReadableMethod == null)
+                {
+                    _loadImageNonReadableMethod = typeof(ImageConversion).GetMethod(
+                        "LoadImage", new[] { typeof(Texture2D), typeof(byte[]), typeof(bool) });
+                }
+                if (_loadImageNonReadableMethod != null)
+                {
+                    _loadImageNonReadableMethod.Invoke(null, new object[] { tex, data, true });
+                    return;
+                }
+                // No three-argument overload on this runtime: load it readable rather than not at all.
+            }
+
             if (_loadImageMethod == null)
             {
                 _loadImageMethod = typeof(ImageConversion).GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });

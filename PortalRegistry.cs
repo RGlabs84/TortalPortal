@@ -26,9 +26,24 @@ namespace TortalPortal
             public Vector3 Pos;
             public Quaternion Rot;
             public bool Locked;
+
+            // The custom map icon this portal has been given, or empty for "whatever the player looking at the
+            // map has chosen". Carried in the index rather than read from the portal's ZDO because the map
+            // marks portals the client has never been anywhere near and holds no ZDO for.
+            public string Icon;
         }
 
         private const byte IndexFormatVersion = 1;
+
+        // Per-portal icons are written AFTER the entries rather than inside them, and the format version is
+        // deliberately left at 1.
+        //
+        // Decode refuses a version it does not recognise and returns an empty list, so bumping the version
+        // would blank the destination window on every client running an older build - a breaking change, for a
+        // cosmetic feature. Appending instead means an older client reads the entries it understands and stops
+        // at the end of them, never seeing the extra bytes and never knowing they were there; a newer client
+        // reads on. The only requirement is that everything above this block keeps its exact shape.
+        private const byte ExtensionVersion = 1;
 
         // ServerSync gives us compression, fragmentation and - the part that matters here - a push to each
         // client as part of its login handshake, so someone joining a world full of portals has the whole
@@ -93,7 +108,39 @@ namespace TortalPortal
                 e.Pos = pkg.ReadVector3();
                 e.Rot = pkg.ReadQuaternion();
                 e.Locked = pkg.ReadBool();
+                e.Icon = "";
                 into.Add(e);
+            }
+
+            DecodeIconExtension(pkg, into);
+        }
+
+        // Its own try/catch, and deliberately not the caller's: a destination list that arrived intact is worth
+        // far more than the icons on it, so anything unexpected in the trailing block costs the markers their
+        // decoration and nothing else. The caller's catch clears the whole list.
+        private static void DecodeIconExtension(ZPackage pkg, List<Entry> into)
+        {
+            try
+            {
+                // Nothing after the entries: a server older than the feature, which is the ordinary case on a
+                // mixed table and not worth a word in the log.
+                if (pkg.GetPos() >= pkg.Size()) return;
+
+                byte ext = pkg.ReadByte();
+                if (ext != ExtensionVersion) return;
+
+                // Sparse - only the portals that actually carry an icon, which on most worlds is none of them.
+                int pairs = pkg.ReadInt();
+                for (int i = 0; i < pairs; i++)
+                {
+                    int index = pkg.ReadInt();
+                    string icon = pkg.ReadString();
+                    if (index >= 0 && index < into.Count) into[index].Icon = icon;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"TortalPortal: the portal index's icon block could not be read - the destinations are fine, their markers just use the default icon. Reason: {ex}");
             }
         }
 
@@ -168,7 +215,32 @@ namespace TortalPortal
                 pkg.Write(!string.IsNullOrEmpty(zdo.GetString("PortalPIN")));
             }
 
+            EncodeIconExtension(pkg, portals);
             return pkg.GetBase64();
+        }
+
+        // Written as (index, name) pairs for only the portals that have an icon, so a world where nobody uses
+        // the feature - which is every world until somebody does - pays five bytes for the whole block.
+        private static void EncodeIconExtension(ZPackage pkg, List<ZDO> portals)
+        {
+            List<int> indices = new List<int>();
+            List<string> icons = new List<string>();
+
+            for (int i = 0; i < portals.Count; i++)
+            {
+                string icon = portals[i].GetString(TortalPinIcon.ZdoKey);
+                if (string.IsNullOrEmpty(icon)) continue;
+                indices.Add(i);
+                icons.Add(icon);
+            }
+
+            pkg.Write(ExtensionVersion);
+            pkg.Write(indices.Count);
+            for (int i = 0; i < indices.Count; i++)
+            {
+                pkg.Write(indices[i]);
+                pkg.Write(icons[i]);
+            }
         }
     }
 }

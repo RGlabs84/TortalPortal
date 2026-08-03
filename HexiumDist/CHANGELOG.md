@@ -1,5 +1,21 @@
 # Changelog - TortalPortal
 
+## [1.2.2]
+
+### 🖼️ Every portal can wear its own mark
+- **Added:** **A library of custom map icons instead of one.** Drop as many PNGs as you like into a `TortalPortalPins` folder beside the plugin and every one of them becomes available — a modpack can ship a whole set rather than picking a single icon for the entire world.
+- **Added:** **Each portal chooses its own.** The portal configuration window (`E` on a gate you built) gains a **Map icon** picker — arrows cycle through every installed icon with a live preview of the marker beside the name. Your mine wears a pickaxe, your swamp outpost a skull, your capital its own crest. The choice is stored on the portal itself, so **everyone on the server sees it**, and it rides the destination index — meaning portals you have never been near are drawn with their proper marker too.
+- **Graceful when an icon is missing:** a portal marked with an icon you do not have installed simply falls back to your own `PortalPinIcon` setting rather than vanishing or drawing a blank. Two players running different modpacks each see a sensible map. The picker keeps the name it does not recognise rather than silently clearing somebody else's choice, and labels it `(not installed here)`.
+- **Nothing breaks on a mixed table.** The icons are appended to the portal index *after* the part older builds read, so a `1.2.0`/`1.2.1` client reads the destination list exactly as before, stops where it always stopped, and never sees the extra data. **The minimum required version stays `1.2.0`** — no forced update, and no reason for one.
+- The original single-file `TortalPortalPin.png` beside the plugin still works untouched and still wins the name if a library file matches it, so an install that has used `PortalPinIcon = Custom` for a year keeps exactly the icon it has always had.
+
+### 🔍 Honest answers about custom icon files
+- **Fixed:** A **non-square icon was stretched** to fill the marker, because vanilla sizes every pin as a square (48 px on the great map, 32 px on the minimap) on the reasonable assumption that its own icons are square. Custom images are now **letterboxed to fit** instead of distorted. Square is still what fills the marker best.
+- **Changed:** Icon files are loaded **without a system-memory copy** now that they are only ever drawn, halving what each one costs to keep.
+- **Added:** An oversized icon says so in the log. "Any size works" is true — vanilla forces the marker box, so a huge PNG cannot spill across your map — but a 4096×4096 file spends about 64 MB of video memory drawing something 48 pixels across. Anything past 256×256 now names itself, its dimensions and its cost, once.
+- **Fixed:** Saving the portal configuration window on a gate you did not build (as an admin) could be **silently discarded**, because a write to a ZDO this game does not own is dropped at the next sync. Ownership is claimed before the write, as the snapshot camera already did.
+- **Restored:** Selecting `PortalPinIcon = Custom` with no PNG installed anywhere says so in the log again, once per session, instead of quietly drawing the rune pin as though the setting had done nothing.
+
 ## [1.2.1]
 
 ### 📖 The manual catches up to the mod

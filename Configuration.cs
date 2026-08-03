@@ -44,7 +44,7 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.2.1",
+            CurrentVersion = "1.2.2",
             // Raised to match, because 1.2.0 is the first release since the rule was written where a mixed
             // table genuinely plays differently. The far-photo pass and live previews run through a server
             // RPC ("TortalPortal_AnchorSectors") that older builds never registered: a 1.1.2 client on a

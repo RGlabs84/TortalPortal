@@ -6,7 +6,7 @@
 [![Multiplayer Compatible](https://img.shields.io/badge/Multiplayer-Server--Synced-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Assets](https://img.shields.io/badge/Assets-100%25_Procedural-green.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.2.1-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.2.2-lightgrey.svg)]()
 
 > *"The old way was to carve a name into the stone and hope another bore the same. A tally of runes, scratched and rescratched, and still you stepped through blind. Better to know the road before you walk it, Viking."*
 
@@ -30,11 +30,11 @@ Lock your gates behind a PIN. Bring the wolves. Decide exactly what may and may 
   - [✨ The Runic Gateway](#the-runic-gateway)
   - [🐺 Bring the Pack (and Ride It Through)](#bring-the-pack-and-ride-it-through)
   - [🚧 Decide What Travels](#decide-what-travels)
-  - [🎯 Make the Map Yours](#make-the-map-yours)
+  - [🎯 Every Gate Its Own Mark](#every-gate-its-own-mark)
   - [👑 Admin Supremacy](#admin-supremacy)
 - [🍗 Instructions](#instructions)
 - [🛠️ How-To](#how-to)
-  - [🖼️ Assign a Custom Map Pin Icon](#assign-a-custom-map-pin-icon)
+  - [🖼️ Assign Custom Map Pin Icons](#assign-custom-map-pin-icons)
   - [🌱 Seed a World with Portals](#seed-a-world-with-portals)
 - [⚙️ Configuration](#configuration)
   - [Server-Synced (Admin Controlled)](#server-synced-admin-controlled)
@@ -98,10 +98,12 @@ Your loyal companions travel with you. Any tamed creature following you steps th
 ### 🚧 Decide What Travels
 Admins get a dual filtering system beyond vanilla's flat metal ban. Populate the **whitelist** to create an exclusive "these may pass" list, and use the **blacklist** to further restrict specific items — or switch the whole thing to `BypassAll` and let everything through. All of it is server-synced, so the rules are the server's, not each client's.
 
-### 🎯 Make the Map Yours
-Portal markers don't have to be vanilla's icons. By default every marker is TortalPortal's own **rune pin** — a glyph generated at runtime, sat on a dark disc inside a coloured ring so it reads as a deliberate mark rather than debris on a busy map — coloured by `PinColour`. `PortalPinIcon` swaps that for any of vanilla's five familiar icons, **or your own image**: drop a PNG beside the plugin and every marker uses it instead.
+### 🎯 Every Gate Its Own Mark
+Portal markers don't have to be vanilla's icons. By default every marker is TortalPortal's own **rune pin** — a glyph generated at runtime, sat on a dark disc inside a coloured ring so it reads as a deliberate mark rather than debris on a busy map — coloured by `PinColour`. `PortalPinIcon` swaps that for any of vanilla's five familiar icons, or for **your own artwork**.
 
-That last option is a real theming tool, not a toy — ship a `TortalPortalPin.png` in a server's modpack and the whole table's markers match your own branding, your own faction crest, whatever you like. Full walkthrough: [🖼️ Assign a Custom Map Pin Icon](#assign-a-custom-map-pin-icon).
+And not just one piece of it. Drop **as many PNGs as you like** into a `TortalPortalPins` folder beside the plugin and every one becomes available — then **each portal picks its own** from the configuration window, with a live preview beside the name. Your mine wears a pickaxe, your swamp outpost a skull, your capital its own crest. A glance at the map tells you what each gate *is*, not merely that it exists.
+
+The choice lives on the portal itself, so **every player on the server sees it** — and it travels in the destination index, which means even portals nobody has ever visited are drawn with their proper marker. Someone who doesn't have one of your icons installed just sees their own default for that gate; nothing breaks, nothing vanishes, and no two players ever have to run the same set. Full walkthrough: [🖼️ Assign Custom Map Pin Icons](#assign-custom-map-pin-icons).
 
 ### 👑 Admin Supremacy
 A built-in bypass lets admins ignore PIN locks, item filters and portal placement limits entirely.
@@ -113,7 +115,7 @@ A built-in bypass lets admins ignore PIN locks, item filters and portal placemen
 *A start-to-finish guide to actually using the thing:*
 
 1. **Place a portal** — the game snaps a hidden high-resolution photo of its destination for the preview system.
-2. **Configure it** — walk up and press `E`. Set its name and toggle a PIN lock.
+2. **Configure it** — walk up and press `E`. Set its name, toggle a PIN lock, and pick the icon it shows on the map (see [Assign Custom Map Pin Icons](#assign-custom-map-pin-icons)).
 3. **Travel** — walk into the portal's range. Pick a destination from the list — or click its marker on the map, and click it again to go.
 4. **Look before you leap** — click a destination's thumbnail (or hit Teleport with the picture open) to see it full screen. Arrow keys or the on-screen arrows flip through every portal's picture like an album; give it a moment on a photo and it goes **`LIVE`** — a real-time window onto the destination you can look around with a right-drag and zoom with the wheel.
 5. **Locked gates** — launching a PIN-locked portal from a favorite or a map marker opens the **quick PIN window** with the keyboard already in the field: type it, hit `Enter`, go. A wrong PIN clears itself for another try.
@@ -126,19 +128,28 @@ A built-in bypass lets admins ignore PIN locks, item filters and portal placemen
 
 ## 🛠️ How-To
 
-### 🖼️ Assign a Custom Map Pin Icon
+### 🖼️ Assign Custom Map Pin Icons
 
-Every portal marker on the great map can wear an image of your choosing instead of the built-in rune pin. Here's the whole recipe:
+You can install **any number** of custom markers and give **each portal its own**.
 
-1. **Make or find a PNG.** Any size, and transparency is respected — a clean glyph or crest on a transparent background reads best at map scale.
-2. **Name it exactly `TortalPortalPin.png`.**
-3. **Drop it in the same folder as `TortalPortal.dll`** — wherever your mod manager (or you, by hand) installed the plugin.
-4. **Set `PortalPinIcon` to `Custom`** — either through BepInEx's in-game Configuration Manager (`F1`, if installed) or by opening `wubarrk.TortalPortal.cfg` and setting `PortalPinIcon = Custom` under `[3 - Features]` directly.
-5. **Restart the game.** The file is read once per session and then cached — dropping it in or swapping it out mid-session won't be picked up until the next launch.
+**1. Build your icon set**
 
-> 💡 **Running a server?** The pin is drawn on each client from *that client's own file* — there's no upload. Ship the same `TortalPortalPin.png` in your modpack next to the DLL and every player on the table sees the same custom marker without doing anything themselves.
->
-> If `Custom` is selected but no file is found, the mod logs it and falls back to the rune pin automatically — nothing breaks either way.
+1. Make or find your PNGs — transparency is respected, so a clean glyph or crest on a transparent background reads best.
+2. Create a folder named exactly **`TortalPortalPins`** in the same folder as `TortalPortal.dll` — wherever your mod manager (or you, by hand) installed the plugin.
+3. Drop the PNGs in. **The filename is the icon's name**, so `Mine.png` shows up in-game as `Mine`. Name them for what they mean and the picker reads itself.
+4. **Restart the game.** The folder is scanned once per session, so anything added while you're playing appears at the next launch. On startup the log lists exactly what it found.
+
+**2. Assign one to a portal**
+
+1. Walk up to a portal you built and press `E`.
+2. Use the **Map icon** row — the arrows cycle through `Default` and every icon you've installed, with a preview swatch beside the name.
+3. Hit **Save**. The choice is stored on the portal, so every player on the server sees that marker, including players who have never been anywhere near the gate.
+
+> 💡 **About image size.** Vanilla draws every map marker into a fixed square box — 48 px on the great map, 32 px on the minimap — so an image of *any* resolution is scaled down into that box and can never spill across your map. Size doesn't hurt what you see; it hurts what you pay. A 4096×4096 PNG holds roughly **64 MB of video memory** to draw something 48 pixels across, and the mod will say so in the log. **64×64 to 128×128 is the sweet spot.** Non-square images are letterboxed to fit rather than stretched, but square fills the marker best.
+
+> 💡 **Running a server?** Icons are drawn on each client from *that client's own files* — nothing is uploaded, and no image ever crosses the wire. Ship your `TortalPortalPins` folder in the modpack and everyone sees the same markers. Anyone missing an icon simply sees their own default for that portal rather than a gap, so mismatched installs degrade gracefully instead of breaking.
+
+> 💡 **Upgrading from a single icon?** The old single-file `TortalPortalPin.png` beside the plugin still works exactly as it always has, and `PortalPinIcon = Custom` still applies it to every portal that hasn't chosen one of its own. Nothing needs moving.
 
 ### 🌱 Seed a World with Portals
 
@@ -201,7 +212,7 @@ Settings live in `wubarrk.TortalPortal.cfg`.
 | `PinColour` | The Rune map pin's colour. Vanilla icons and Custom PNGs bring their own. Default hard green `#12FF21`. |
 | `UIGoldColour` | The window frames' metal. Shadow and highlight derive from it — silver, bronze or verdigris is one change, applied live. Default antique gold `#CC9E42`. |
 | `ShowPortalPinsOnMap` | Default on. Marks every listed portal on the large map while the destination window is open. Never saved, removed when the window closes. |
-| `PortalPinIcon` | Default `Rune` — TortalPortal's own glyph-in-a-ring. Also vanilla's five icons, or `Custom` to use a `TortalPortalPin.png` placed beside the plugin DLL (falls back to `Rune` if missing). See [🖼️ Assign a Custom Map Pin Icon](#assign-a-custom-map-pin-icon). |
+| `PortalPinIcon` | Default `Rune` — TortalPortal's own glyph-in-a-ring. Also vanilla's five icons, or `Custom` for your own artwork. This is the **fallback** for portals that haven't picked an icon of their own, and for icons you don't have installed. See [🖼️ Assign Custom Map Pin Icons](#assign-custom-map-pin-icons). |
 | `EnableDebugLogging` | Verbose logging for UI and teleport events. |
 
 ---
