@@ -5,30 +5,39 @@ using UnityEngine;
 
 namespace TortalPortal
 {
-    // The map-marker art for the two non-vanilla PortalPinIcon choices, and the custom icon library behind
-    // per-portal markers.
+    // The map-marker art: the generated rune, the player's own PNGs, and the icons the server hands down.
     //
     // Rune is generated at runtime like every other piece of art in this mod: one of the Elder Futhark glyphs
     // from TortalRuneTexture, sat on a dark disc inside a bright ring so it reads as a marker rather than a
     // loose squiggle at map scale.
     //
-    // Everything else is a PNG on disk. Up to 1.2.1 there was exactly one - TortalPortalPin.png beside the
-    // plugin - and every portal in the world wore it, which meant a modpack could theme its markers but not
-    // tell them apart. Now any number of PNGs can sit in a TortalPortalPins folder beside the plugin, and each
-    // portal names the one it wants (see ZdoKey). The single-file layout still works exactly as it did, so an
-    // install that predates this never notices the change.
+    // Everything else is a PNG. Where that PNG comes from is the whole of this class's job, and there are
+    // three places it can be:
     //
-    // Files are found once per session and read on first use, not at startup: a modpack shipping forty icons
-    // should not pay for thirty-nine nobody looks at.
+    //   1. A local file whose bytes MATCH what the server says the icon is. Same picture, already on disk -
+    //      draw it and download nothing. This is what stops the icons that ship with the mod from being
+    //      re-downloaded on every server: the server was handed the same package, so it offers them, and
+    //      every client already has the identical bytes.
+    //   2. The server's copy, cached under the config folder by content hash. The server WINS a genuine
+    //      collision - same name, different picture - because the alternative is two players looking at the
+    //      same portal and seeing different things, which is the exact problem the feature exists to solve.
+    //   3. A local file the server has never heard of. Yours alone, drawn only for you.
+    //
+    // The player's personal fallback for unmarked portals - PortalPinIcon.Custom - is deliberately NOT part
+    // of that ladder. It is one specific file, TortalPortalPin.png, and no server can change it.
     public static class TortalPinIcon
     {
         // Where a portal's own icon choice lives on its ZDO - the file's name without the extension. Empty or
         // absent means "whatever this player's PortalPinIcon setting says", which is every portal raised
         // before this feature existed.
+        //
+        // NOTE this is the ICON's name, and has nothing to do with the portal's name, which is vanilla's
+        // ZDOVars.s_tag. A gate called "Bonemass Camp" can wear troll_sign; a gate called "banana" gets no
+        // banana. They are set on adjacent but entirely independent lines when the config window saves.
         public const string ZdoKey = "TortalPinIcon";
 
-        private const string LibraryFolder = "TortalPortalPins";
-        private const string LegacyFileName = "TortalPortalPin.png";
+        internal const string LibraryFolder = "TortalPortalPins";
+        internal const string LegacyFileName = "TortalPortalPin.png";
 
         // Vanilla draws every pin into a square box - 48 px on the great map, 32 px on the minimap (Minimap
         // m_pinSizeLarge / m_pinSizeSmall), set on the marker's RectTransform on both axes. So a picture of any
@@ -40,87 +49,228 @@ namespace TortalPortal
         private static Sprite _rune;
         private static Color _runeColour;
 
-        // Name -> file, filled by the one-off scan. Name -> sprite, filled on demand; a null VALUE is a
-        // remembered failure, so a missing or broken file is reported once rather than retried every frame the
-        // map is open.
-        private static readonly Dictionary<string, string> _paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        private static readonly Dictionary<string, Sprite> _loaded = new Dictionary<string, Sprite>(StringComparer.OrdinalIgnoreCase);
-        private static readonly List<string> _names = new List<string>();
+        // Name -> local file, filled by the one-off scan of filenames.
+        private static readonly Dictionary<string, string> Paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // Name -> hash of that local file, computed on demand. The scan deliberately does not do this: a
+        // modpack shipping forty icons should not read forty files at startup to answer questions about two.
+        private static readonly Dictionary<string, string> LocalHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // Name -> resolved sprite. A null VALUE is a remembered "not available here", so a missing file or an
+        // icon still in flight is reported once rather than retried every frame the map is open.
+        private static readonly Dictionary<string, Sprite> Loaded = new Dictionary<string, Sprite>(StringComparer.OrdinalIgnoreCase);
+
+        // Sprites that a re-resolve replaced. They are NOT destroyed at that moment: a map marker may still be
+        // holding one, and drawing a destroyed sprite is the exact failure the HideAndDontSave flags exist to
+        // prevent. They are destroyed at world teardown instead, when nothing can be holding them.
+        private static readonly List<Sprite> Retired = new List<Sprite>();
+
+        private static readonly List<string> LocalNames = new List<string>();
+        private static readonly HashSet<string> WarnedMismatch = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> WarnedMissing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         private static bool _scanned;
         private static bool _warnedNoCustom;
 
-        // Every custom icon this client can draw, sorted, for the picker in the portal configuration window.
-        // Empty when the player has installed no PNGs at all, which is the signal to hide the picker entirely
-        // rather than offer a control with nothing in it.
+        // Every icon this client could draw right now: its own files plus everything the server offers.
+        // Sorted, and used to build the picker in the portal configuration window.
         public static List<string> Names
         {
-            get { EnsureScanned(); return _names; }
+            get
+            {
+                EnsureScanned();
+                HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                List<string> all = new List<string>();
+                foreach (string n in LocalNames)
+                {
+                    if (seen.Add(n)) all.Add(n);
+                }
+                foreach (string n in TortalPinLibrary.Names())
+                {
+                    if (seen.Add(n)) all.Add(n);
+                }
+                all.Sort(StringComparer.OrdinalIgnoreCase);
+                return all;
+            }
         }
 
-        // Never returns null: Custom falls back to the rune when no PNG is there, and the rune is generated
-        // code that cannot fail to exist. Vanilla icons never reach this - the caller maps those to
+        // The filename is the id and never changes; this is only how it reads in the window. Deliberately NOT
+        // done in the scan: the name registered there is written to the portal's ZDO and is the catalogue's
+        // key, so substituting characters in it would make every lookup miss.
+        public static string Pretty(string name)
+        {
+            return string.IsNullOrEmpty(name) ? name : name.Replace('_', ' ');
+        }
+
+        // ---- resolution ------------------------------------------------------------------------------------
+
+        // Never returns null: Custom falls back to the rune when its file is not there, and the rune is
+        // generated code that cannot fail to exist. Vanilla icons never reach this - the caller maps those to
         // Minimap.PinType.
         public static Sprite Get(PortalPinIcon which)
         {
             if (which == PortalPinIcon.Custom)
             {
-                string name = DefaultCustomName();
-                if (string.IsNullOrEmpty(name))
+                // The player NAMES their default. Anything else falls over as soon as the library is real:
+                // a hard-coded filename cannot point at an icon the server sent (there is no file to name),
+                // and "whichever sorts first" is an arbitrary pick nobody made - shipping eight icons would
+                // have silently handed everyone a boar with meat for eyes.
+                string wanted = Configuration.defaultPinIcon != null ? (Configuration.defaultPinIcon.Value ?? "").Trim() : "";
+                if (!string.IsNullOrEmpty(wanted))
                 {
-                    // Said once per session rather than every time the map opens. Without it, choosing Custom
-                    // with no PNG anywhere silently draws the rune and reads as the setting being broken.
+                    Sprite named = GetByName(wanted);
+                    if (named != null) return named;
+
                     if (!_warnedNoCustom)
                     {
                         _warnedNoCustom = true;
-                        Plugin.Log.LogInfo($"TortalPortal: PortalPinIcon is Custom, but there is no {LegacyFileName} beside the plugin and no PNG in the {LibraryFolder} folder - using the Rune pin instead.");
+                        Plugin.Log.LogWarning($"TortalPortal: DefaultPinIcon is set to '{wanted}', which is not installed here and is not offered by the server - using the Rune pin instead. Installed icons: {(Names.Count > 0 ? string.Join(", ", Names.ToArray()) : "none")}.");
                     }
+                    return GetRune();
                 }
-                else
+
+                // Nothing named: the single-file layout that predates the library still works untouched.
+                Sprite legacy = LoadLegacy();
+                if (legacy != null) return legacy;
+
+                if (!_warnedNoCustom)
                 {
-                    Sprite custom = GetByName(name);
-                    if (custom != null) return custom;
+                    _warnedNoCustom = true;
+                    Plugin.Log.LogInfo($"TortalPortal: PortalPinIcon is Custom but DefaultPinIcon names nothing and there is no {LegacyFileName} beside the plugin - using the Rune pin instead. Set DefaultPinIcon to any installed icon's name{(Names.Count > 0 ? " (available: " + string.Join(", ", Names.ToArray()) + ")" : "")}.");
                 }
             }
             return GetRune();
         }
 
-        // A named icon, or null when this client has no such file - which is a normal state, not an error: the
-        // portal's owner may have picked an icon out of a modpack the player looking at the map does not run.
-        // The caller falls back to the player's own PortalPinIcon setting, so the marker is always drawn.
+        // A named icon, or null when it cannot be drawn here yet - which is a normal state, not an error. The
+        // caller falls back to the player's own PortalPinIcon setting, so a marker is always drawn.
         public static Sprite GetByName(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
             EnsureScanned();
 
-            if (_loaded.TryGetValue(name, out Sprite cached)) return cached;
+            if (Loaded.TryGetValue(name, out Sprite cached)) return cached;
 
-            if (!_paths.TryGetValue(name, out string path))
-            {
-                _loaded[name] = null;
-                Plugin.Log.LogInfo($"TortalPortal: a portal asks for the map icon '{name}', which is not installed here - using the default marker for it. Drop {name}.png in the {LibraryFolder} folder beside the plugin to see it.");
-                return null;
-            }
-
-            Sprite sprite = LoadFrom(path, name);
-            _loaded[name] = sprite;
+            Sprite sprite = Resolve(name);
+            Loaded[name] = sprite;
             return sprite;
         }
 
-        // What PortalPinIcon.Custom means now that there can be more than one file. The legacy single file
-        // wins when it is there, so an install that has used Custom for a year keeps the icon it has always
-        // had; otherwise the first icon in the library stands in, so choosing Custom with a library installed
-        // does something sensible instead of nothing.
-        private static string DefaultCustomName()
+        private static Sprite Resolve(string name)
         {
-            EnsureScanned();
-            string legacy = Path.GetFileNameWithoutExtension(LegacyFileName);
-            if (_paths.ContainsKey(legacy)) return legacy;
-            return _names.Count > 0 ? _names[0] : null;
+            TortalPinLibrary.Entry offered = TortalPinLibrary.Find(name);
+            bool haveLocal = Paths.TryGetValue(name, out string localPath);
+
+            if (offered != null)
+            {
+                // Tier 1 - the same picture is already on disk. Nothing to download, nothing to decide.
+                if (haveLocal && string.Equals(LocalHashFor(name), offered.Hash, StringComparison.OrdinalIgnoreCase))
+                {
+                    return LoadFrom(localPath, name);
+                }
+
+                // Tier 2 - the server's copy, once it has arrived.
+                if (TortalPinLibrary.HasBlob(offered.Hash))
+                {
+                    if (haveLocal && WarnedMismatch.Add(name))
+                    {
+                        Plugin.Log.LogInfo($"TortalPortal: your own '{name}.png' is a different picture from the server's. Drawing the server's, so this portal looks the same to everyone here. Your file is untouched.");
+                    }
+                    return LoadFrom(TortalPinLibrary.BlobPath(offered.Hash), name);
+                }
+
+                // Offered but not here yet. A local file of the same name stands in meanwhile - a picture of
+                // roughly the right meaning beats a generic marker - and the download swaps it in when it
+                // lands, because completing one moves TortalPinLibrary.Revision.
+                if (haveLocal) return LoadFrom(localPath, name);
+                return null;
+            }
+
+            // Tier 3 - the server has never heard of it. Yours alone.
+            if (haveLocal) return LoadFrom(localPath, name);
+
+            if (WarnedMissing.Add(name))
+            {
+                Plugin.Log.LogInfo($"TortalPortal: a portal asks for the map icon '{name}', which is not installed here and is not offered by the server - using the default marker for it. Drop {name}.png in the {LibraryFolder} folder beside the plugin to see it.");
+            }
+            return null;
         }
 
-        // Filenames only - nothing is read from disk here. Runs once per session: adding a PNG while the game
-        // is running needs a restart, which is worth one line in the log at startup rather than a directory
-        // watch running for the lifetime of the process.
+        // Called when the catalogue changes, when a download completes, and at world teardown. Everything
+        // resolved against the server has to be worked out again; the sprites already handed to map markers
+        // are retired rather than destroyed.
+        public static void ForgetServerIcons()
+        {
+            foreach (Sprite s in Loaded.Values)
+            {
+                if (s != null) Retired.Add(s);
+            }
+            Loaded.Clear();
+            WarnedMismatch.Clear();
+            WarnedMissing.Clear();
+        }
+
+        // Leaving a world. Statics here are per-server state - which icons exist, which the server overrode -
+        // and without this they would follow the player to the next server and into single player.
+        public static void Reset()
+        {
+            try
+            {
+                ForgetServerIcons();
+                foreach (Sprite s in Retired)
+                {
+                    if (s == null) continue;
+                    Texture2D tex = s.texture;
+                    UnityEngine.Object.Destroy(s);
+                    if (tex != null) UnityEngine.Object.Destroy(tex);
+                }
+                Retired.Clear();
+
+                Paths.Clear();
+                LocalHashes.Clear();
+                LocalNames.Clear();
+                _scanned = false;
+                _warnedNoCustom = false;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: resetting the map icon library failed (non-fatal). Reason: {ex}");
+            }
+        }
+
+        // ---- local files -----------------------------------------------------------------------------------
+
+        // True when this client's own file for that name is byte-identical to what the server is offering.
+        public static bool LocalHashMatches(string name, string hash)
+        {
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(hash)) return false;
+            EnsureScanned();
+            string mine = LocalHashFor(name);
+            return mine != null && string.Equals(mine, hash, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string LocalHashFor(string name)
+        {
+            if (LocalHashes.TryGetValue(name, out string cached)) return cached;
+            if (!Paths.TryGetValue(name, out string path)) return null;
+
+            string hash = null;
+            try
+            {
+                hash = TortalPinLibrary.HashOf(File.ReadAllBytes(path));
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"TortalPortal: could not read '{path}' to compare it with the server's copy. Reason: {ex.Message}");
+            }
+
+            LocalHashes[name] = hash;
+            return hash;
+        }
+
+        // Filenames only - nothing is read from disk here. Runs once per session: adding a PNG by hand while
+        // the game is running needs a restart, which is worth one line in the log rather than a directory
+        // watch running for the lifetime of the process. Icons arriving FROM THE SERVER need no restart.
         private static void EnsureScanned()
         {
             if (_scanned) return;
@@ -129,10 +279,6 @@ namespace TortalPortal
             try
             {
                 string dir = Path.GetDirectoryName(Plugin.Instance.Info.Location) ?? "";
-
-                // The legacy file is registered first so it wins the name if a library file shares it.
-                string legacy = Path.Combine(dir, LegacyFileName);
-                if (File.Exists(legacy)) Register(legacy);
 
                 string library = Path.Combine(dir, LibraryFolder);
                 if (Directory.Exists(library))
@@ -143,25 +289,50 @@ namespace TortalPortal
                     }
                 }
 
-                _names.Sort(StringComparer.OrdinalIgnoreCase);
+                LocalNames.Sort(StringComparer.OrdinalIgnoreCase);
 
-                if (_names.Count > 0)
+                if (LocalNames.Count > 0)
                 {
-                    Plugin.Log.LogInfo($"TortalPortal: {_names.Count} custom map icon(s) available - {string.Join(", ", _names.ToArray())}.");
+                    Plugin.Log.LogInfo($"TortalPortal: {LocalNames.Count} map icon(s) on this machine - {string.Join(", ", LocalNames.ToArray())}.");
                 }
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogError($"TortalPortal: could not scan for custom map icons (non-fatal, the rune pin is used instead). Reason: {ex}");
+                Plugin.Log.LogError($"TortalPortal: could not scan for map icons (non-fatal, the rune pin is used instead). Reason: {ex}");
             }
         }
 
         private static void Register(string path)
         {
+            // The filename IS the id - written to the portal's ZDO, and the catalogue's key. Nothing is
+            // substituted or prettified here; see Pretty() for how it reads in the window.
             string name = Path.GetFileNameWithoutExtension(path);
-            if (string.IsNullOrEmpty(name) || _paths.ContainsKey(name)) return;
-            _paths[name] = path;
-            _names.Add(name);
+            if (string.IsNullOrEmpty(name) || Paths.ContainsKey(name)) return;
+            Paths[name] = path;
+            LocalNames.Add(name);
+        }
+
+        // The single-file layout that predates the folder. Kept entirely separate from the library so it can
+        // never be confused with a shared icon, and so PortalPinIcon.Custom means exactly one thing.
+        private static Sprite LoadLegacy()
+        {
+            const string key = " legacy";
+            if (Loaded.TryGetValue(key, out Sprite cached)) return cached;
+
+            Sprite sprite = null;
+            try
+            {
+                string dir = Path.GetDirectoryName(Plugin.Instance.Info.Location) ?? "";
+                string path = Path.Combine(dir, LegacyFileName);
+                if (File.Exists(path)) sprite = LoadFrom(path, Path.GetFileNameWithoutExtension(LegacyFileName));
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: could not load {LegacyFileName} (non-fatal, the rune pin is used). Reason: {ex}");
+            }
+
+            Loaded[key] = sprite;
+            return sprite;
         }
 
         private static Sprite LoadFrom(string path, string name)
@@ -194,7 +365,7 @@ namespace TortalPortal
                 }
 
                 Sprite sprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-                Plugin.Log.LogInfo($"TortalPortal: loaded map icon '{name}' from {path} ({tex.width}x{tex.height}).");
+                Configuration.LogDebug($"Loaded map icon '{name}' from {path} ({tex.width}x{tex.height}).");
                 return sprite;
             }
             catch (Exception ex)
@@ -203,6 +374,8 @@ namespace TortalPortal
                 return null;
             }
         }
+
+        // ---- the rune --------------------------------------------------------------------------------------
 
         private static Sprite GetRune()
         {

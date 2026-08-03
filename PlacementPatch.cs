@@ -10,6 +10,24 @@ namespace TortalPortal
     [HarmonyPatch]
     public static class PlacementPatch
     {
+        // The other end of ZNet_Start_Postfix. Leaving a world has to shut our windows explicitly: the UI
+        // object is DontDestroyOnLoad and would otherwise carry an open window onto the main menu, where
+        // there is no portal to walk away from and no way to dismiss it. OnGUI guards this too, but doing
+        // it here means the window is gone on the frame the session ends rather than the frame after.
+        [HarmonyPatch(typeof(ZNet), "Shutdown")]
+        [HarmonyPostfix]
+        public static void ZNet_Shutdown_Postfix()
+        {
+            try
+            {
+                PortalUIManager.HideUI();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: {nameof(ZNet_Shutdown_Postfix)} failed (non-fatal). Reason: {ex}");
+            }
+        }
+
         [HarmonyPatch(typeof(ZNet), nameof(ZNet.Start))]
         [HarmonyPostfix]
         public static void ZNet_Start_Postfix()
@@ -21,6 +39,7 @@ namespace TortalPortal
                 // dedicated server DOES run.
                 SectorSubscription.OnZNetStart();
                 ScatterCommand.OnZNetStart();
+                TortalPinLibrary.OnZNetStart();
                 InitializeBackgroundSnapshot();
             }
             catch (Exception ex)
@@ -418,8 +437,20 @@ namespace TortalPortal
             float started = Time.realtimeSinceStartup;
             Plugin.Log.LogInfo($"TortalPortal: far pass: anchoring '{zdo.GetString(ZDOVars.s_tag)}' at ({pos.x:0},{pos.z:0}){(viaServer ? " via sector subscription" : " from local memory")}.");
 
+            // The walk and the live feed share ONE anchor and ONE borrowed environment, and the guard
+            // that keeps them apart is checked before this routine is started - which is not the same
+            // as still being true when it gets here. ClientFarShotRoutine waits on a RequestZDO round
+            // trip first, and a player can open a gate in that window. Going ahead anyway would call
+            // Attach, whose first act is Detach, and quietly strip the sky off a feed somebody is
+            // actually watching. A lost background photograph is much the cheaper of the two.
+            if (LivePreview.Active) yield break;
+
             _lastAnchorReceivedWorld = false;
             SnapshotAnchor.Set(pos);
+            // Up front, before the settle loop: the destination's weather is a CLONE that has to
+            // simulate for a moment before ash is actually falling in shot, and grass fills in one
+            // patch per frame. Both want the settle budget, not the instant before the shutter.
+            AnchorEnvironment.Attach(pos);
             // try/finally (no catch - the iterator rule) so the anchor NEVER outlives this routine: an
             // anchor left standing would keep a patch of far-off world loaded for the rest of the session.
             try
@@ -437,8 +468,12 @@ namespace TortalPortal
                     {
                         yield break; // world unloading; finally drops the anchor
                     }
+                    // Same reasoning as the check above the settle loop, for a feed opened DURING it:
+                    // give the anchor and the sky straight back. The finally does the handing over.
+                    if (LivePreview.Active) yield break;
 
                     SnapshotAnchor.PokeZones();
+                    AnchorEnvironment.Tick();
                     if (viaServer && Time.realtimeSinceStartup >= nextRenew)
                     {
                         SectorSubscription.Renew(pos);
@@ -491,6 +526,7 @@ namespace TortalPortal
             }
             finally
             {
+                AnchorEnvironment.Detach();
                 SnapshotAnchor.Clear();
                 if (viaServer) SectorSubscription.Release();
             }
@@ -551,6 +587,109 @@ namespace TortalPortal
         public const float CameraPitch = 8f;             // nose down a touch, so the shot is ground not sky
         public const float CameraFieldOfView = 78f;      // wide angle
 
+        // The game's own post-processing profile, borrowed onto a camera of ours.
+        //
+        // Valheim runs Post Processing Stack v1: a PostProcessingBehaviour sitting beside CameraEffects on
+        // the main camera's object, carrying the tonemapper, colour grading, bloom, vignette and the rest.
+        // Camera.CopyFrom copies the Camera COMPONENT only, so a camera built the obvious way renders the
+        // raw linear buffer - milky, flat, highlights blown - which is what made photographs and live feeds
+        // look over-exposed no matter what resolution they were shot at.
+        //
+        // The profile is BORROWED, never cloned or edited: it is the live asset the player's own graphics
+        // settings are written into, so touching it would change what they see out of their own eyes.
+        //
+        // Public so the live preview takes the identical path. A still and a feed of the same place looking
+        // different would be worse than both looking wrong.
+        //
+        // Fails soft everywhere: no behaviour, no profile, or an exception all mean the shot is taken
+        // without post-processing, exactly as it was before - still a picture, just a flatter one.
+        // The live feed's own copy of the game's post-processing profile - a runtime asset, so it has
+        // to be destroyed by hand or every opened feed leaks one. Made here because this is where it
+        // is made; released by LivePreview when the feed closes.
+        private static UnityEngine.PostProcessing.PostProcessingProfile _liveProfile;
+
+        public static void ReleaseLiveProfile()
+        {
+            try
+            {
+                if (_liveProfile != null) UnityEngine.Object.Destroy(_liveProfile);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"TortalPortal: could not release the live feed's post-processing copy (non-fatal). Reason: {ex.Message}");
+            }
+            _liveProfile = null;
+        }
+
+        // liveFeed: the camera will persist and render every frame rather than being fired once and
+        // thrown away. That distinction matters more than it looks. A single Camera.Render() gets the
+        // profile's opening exposure and stops there, but a camera that keeps rendering runs Post
+        // Processing's HISTORY-driven effects - and eye adaptation is an auto-exposure that ramps over
+        // about a second, which is precisely how long a correct Ashlands sky stayed red before washing
+        // out to pale. The player's own camera is allowed to do that because the player's eyes are
+        // supposed to adjust; a window onto somewhere else is not a second pair of eyes.
+        public static void AttachPostProcessing(GameObject camObj, Camera gameCam, bool liveFeed = false)
+        {
+            try
+            {
+                if (camObj == null) return;
+
+                UnityEngine.PostProcessing.PostProcessingBehaviour src = null;
+
+                // Where the game finds it itself, in CameraEffects.Awake.
+                if (CameraEffects.instance != null)
+                {
+                    src = CameraEffects.instance.GetComponent<UnityEngine.PostProcessing.PostProcessingBehaviour>();
+                }
+                if (src == null && gameCam != null)
+                {
+                    src = gameCam.GetComponent<UnityEngine.PostProcessing.PostProcessingBehaviour>();
+                }
+                if (src == null || src.profile == null)
+                {
+                    Configuration.LogDebug("No post-processing profile found to borrow; the portal camera shoots flat.");
+                    return;
+                }
+
+                UnityEngine.PostProcessing.PostProcessingBehaviour dst =
+                    camObj.AddComponent<UnityEngine.PostProcessing.PostProcessingBehaviour>();
+
+                if (!liveFeed)
+                {
+                    // Borrowed, not cloned: one render, no history, and nothing of ours to own.
+                    dst.profile = src.profile;
+                    return;
+                }
+
+                // A live feed needs its own COPY of the profile, because the settings below have to be
+                // turned off for this camera without turning them off for the player - and the profile
+                // is a shared asset. Instantiate gives a runtime copy; LivePreview owns and destroys it.
+                UnityEngine.PostProcessing.PostProcessingProfile copy =
+                    UnityEngine.Object.Instantiate(src.profile);
+                copy.name = src.profile.name + " (TortalPortal live)";
+
+                // Auto-exposure. The whole reason for the copy.
+                if (copy.eyeAdaptation.enabled)
+                {
+                    UnityEngine.PostProcessing.EyeAdaptationModel.Settings eye = copy.eyeAdaptation.settings;
+                    eye.minLuminance = 0f;
+                    eye.maxLuminance = 0f;   // a fixed 0EV window - no ramp, nothing to adapt to
+                    copy.eyeAdaptation.settings = eye;
+                    copy.eyeAdaptation.enabled = false;
+                }
+                // Also history-driven, and a camera that teleports across the map every time the viewer
+                // flips portals has no history worth keeping - it smears the first frames of every feed.
+                copy.motionBlur.enabled = false;
+
+                dst.profile = copy;
+                _liveProfile = copy;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"TortalPortal: could not borrow the game's post-processing for the portal camera (non-fatal, the picture will just look flat). Reason: {ex.Message}");
+            }
+        }
+
         private static void TakeSnapshotCore(Transform portalTransform)
         {
             // The routine that got us here waits a frame between choosing the portal and this call, and in
@@ -563,6 +702,7 @@ namespace TortalPortal
             RenderTexture rt = null;
             Texture2D tex = null;
             TortalPortalRuneVFX vfx = null;
+            // Declared before the try so the shared helper below can be found from both shot paths.
             try
             {
                 camObj = new GameObject("PortalSnapshotCam");
@@ -589,6 +729,14 @@ namespace TortalPortal
                 if (gameCam == null) cam.farClipPlane = 300f;
 
                 // Resolution is the CameraResolution dropdown, read through the sanitized accessor.
+                // Valheim's tonemapping, colour grading, bloom and vignette are Post Processing Stack v1,
+                // living on a PostProcessingBehaviour on the main camera's OBJECT - and Camera.CopyFrom
+                // copies the Camera COMPONENT and nothing else. Without it this camera hands back the raw
+                // linear buffer: flat, milky, highlights blown out, nothing like the view the player is
+                // standing in. Borrowing the profile (not cloning it) is what makes a photograph look like
+                // the game.
+                AttachPostProcessing(camObj, gameCam);
+
                 Configuration.GetCameraResolution(out int rw, out int rh);
                 rt = new RenderTexture(rw, rh, 24);
                 cam.targetTexture = rt;
@@ -600,6 +748,10 @@ namespace TortalPortal
                 // (ZNetView and all) down mid-frame.
                 vfx = portalTransform.GetComponent<TortalPortalRuneVFX>();
                 if (vfx != null) vfx.SetVisible(false);
+
+                // A no-op unless an anchor is standing, so a shot taken where the player is actually
+                // standing keeps the sky it already has - which is the correct one.
+                AnchorEnvironment.Bind(cam);
 
                 cam.Render();
 

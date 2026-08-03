@@ -40,6 +40,30 @@ namespace TortalPortal
         private static Camera _cam;
         private static RenderTexture _rt;
 
+        // The feed is now the STILL camera run repeatedly, rather than a second kind of camera that
+        // happens to point at the same place. That was the whole trouble: an enabled camera drawing
+        // its render texture straight to the screen is a different pipeline from Camera.Render() read
+        // back into a Texture2D, and every difference between the two showed up as the feed looking
+        // unlike the photograph beside it. So there is no second pipeline any more - this is the
+        // snapshot path, minus the JPEG, on a timer.
+        private static Texture2D _tex;
+        private static Coroutine _renderRoutine;
+
+        // A full-resolution ReadPixels is a synchronous GPU readback: the CPU waits for the GPU to
+        // finish, every time. That is affordable a few times a minute for a photograph and not at all
+        // affordable at the display's frame rate, so the feed runs at its own rate and the game keeps
+        // the rest. 30 reads as motion; the camera's own responsiveness to the mouse is unaffected
+        // because looking around moves the transform immediately and the next read picks it up.
+        private const float LiveFps = 30f;
+
+        // Floor on how soon a feed may open, so the weather copy has a moment to fill and the near
+        // objects have a moment to arrive. Short on purpose - it is a floor, not a target.
+        private const float MinWarmupSeconds = 2f;
+
+        // How many times to rebuild a camera that failed to build. Failing once used to end the feed
+        // outright and leave the stored still standing with no explanation and no second chance.
+        private const int CameraAttempts = 3;
+
         // The background walk checks this: while somebody is watching, the walk waits its turn for the
         // single anchor rather than fighting over it.
         public static bool Active => _phase != Phase.Idle;
@@ -78,7 +102,10 @@ namespace TortalPortal
         // null while warming (the album falls back to the stored still).
         public static Texture CurrentTexture(ZDOID id)
         {
-            return _phase == Phase.Live && id == _id && _rt != null ? _rt : null;
+            // The Texture2D, not the render texture: this is the same surface, in the same format, that
+            // the stored photograph is built from, so a feed and the still it replaces are the same
+            // picture taken a moment apart.
+            return _phase == Phase.Live && id == _id && _tex != null ? _tex : null;
         }
 
         // ---- looking around --------------------------------------------------------------------------------
@@ -152,6 +179,7 @@ namespace TortalPortal
         {
             bool viaServer = ZNet.instance != null && !ZNet.instance.IsServer();
             bool anchored = false;
+            int cameraAttempts = 0;
             float nextRenew = 0f;
 
             try
@@ -165,15 +193,22 @@ namespace TortalPortal
 
                     if (!anchored)
                     {
-                        // The background walk may hold the single anchor mid-shot; wait it out. The album
-                        // is showing the stored still meanwhile, and the walk will not START a new shot
-                        // while Active is true, so the wait is bounded by one shot's settle budget.
+                        // The background walk may hold the single anchor mid-shot; wait it out. Since
+                        // 1.3.4 the walk also stands DOWN the moment a feed opens, so this is a
+                        // handover of a frame or two rather than a wait on a whole settle budget -
+                        // hence polling it hard instead of a quarter-second at a time. Every one of
+                        // those quarter-seconds was a quarter-second of the viewer staring at a still
+                        // wondering whether the thing was broken.
                         if (SnapshotAnchor.IsActive)
                         {
-                            yield return new WaitForSeconds(0.25f);
+                            yield return null;
                             continue;
                         }
                         SnapshotAnchor.Set(_pos);
+                        // Before the settle wait, not after: the weather copy needs those seconds to
+                        // fill, or the feed goes live on ash that has only just started falling.
+                        AnchorEnvironment.Attach(_pos);
+                        AnchorPresence.Set(_pos);
                         anchored = true;
                         if (viaServer)
                         {
@@ -183,6 +218,18 @@ namespace TortalPortal
                     }
 
                     SnapshotAnchor.PokeZones();
+                    // A background photo pass already in flight when this feed opened will have called
+                    // Detach on its way past and taken the borrowed sky with it - including this
+                    // camera's binding, which is otherwise only ever handed over once, in StartCamera.
+                    // The walk now stands aside for a live feed, so this should not fire; it is here
+                    // because the cost of being wrong is a whole session watching gates under the
+                    // player's own weather, with nothing in the log to say why.
+                    if (anchored && Configuration.anchoredEnvironment.Value && !AnchorEnvironment.IsActive)
+                    {
+                        AnchorEnvironment.Attach(_pos);
+                        if (_cam != null) AnchorEnvironment.Bind(_cam);
+                    }
+                    AnchorEnvironment.Tick();
                     if (viaServer && Time.realtimeSinceStartup >= nextRenew)
                     {
                         SectorSubscription.Renew(_pos);
@@ -199,23 +246,101 @@ namespace TortalPortal
                                      !Heightmap.HaveQueuedRebuild(_pos, Configuration.AnchorSettleRadiusSafe) &&
                                      SnapshotAnchor.DistantTerrainReady;
                         bool budgetSpent = Time.realtimeSinceStartup - _startedAt > Configuration.AnchorTimeoutSafe;
-                        if (ready || budgetSpent)
+
+                        // The middle tier, and the reason a feed used to feel unreliable. Perfect
+                        // settle is the right bar for a PHOTOGRAPH, which is permanent - but a feed
+                        // held to that bar sits on a stale still for ten or fifteen seconds waiting
+                        // for a distant-terrain bake, and from the outside that is indistinguishable
+                        // from nothing happening. Ground under the camera plus a moment for the near
+                        // objects is enough to open the window; the rest arrives while you watch,
+                        // which is exactly what looking out of a window is like.
+                        bool groundUnderCamera = Heightmap.FindHeightmap(_pos) != null &&
+                                                 !Heightmap.HaveQueuedRebuild(_pos, Configuration.AnchorSettleRadiusSafe);
+                        bool goodEnough = groundUnderCamera &&
+                                          Time.realtimeSinceStartup - _startedAt > MinWarmupSeconds;
+
+                        if (ready || goodEnough || budgetSpent)
                         {
                             if (StartCamera())
                             {
                                 _phase = Phase.Live;
-                                Plugin.Log.LogInfo($"TortalPortal: live preview went live at ({_pos.x:0},{_pos.z:0}) after {Time.realtimeSinceStartup - _startedAt:0.0}s{(ready ? "" : " (settle budget spent - scene finishes loading on screen)")}.");
+                                _renderRoutine = Plugin.Instance.StartCoroutine(RenderLoop());
+                                string why = ready ? "settled" : (goodEnough ? "ground ready - the rest arrives on screen" : "settle budget spent");
+                                Plugin.Log.LogInfo($"TortalPortal: live preview went live at ({_pos.x:0},{_pos.z:0}) after {Time.realtimeSinceStartup - _startedAt:0.0}s ({why}).");
                             }
-                            else yield break; // camera could not be built; the still stands in
+                            else
+                            {
+                                // One failure used to end the feed for good, leaving the stored still
+                                // in place with nothing said. A camera can fail to build for reasons
+                                // that pass - Camera.main missing for a frame during a scene change
+                                // being the obvious one - so try again before giving up.
+                                cameraAttempts++;
+                                if (cameraAttempts >= CameraAttempts)
+                                {
+                                    Plugin.Log.LogWarning($"TortalPortal: live preview gave up building a camera at ({_pos.x:0},{_pos.z:0}) after {CameraAttempts} attempts; the stored picture stands in.");
+                                    yield break;
+                                }
+                                yield return new WaitForSeconds(0.25f);
+                                continue;
+                            }
                         }
                     }
 
-                    yield return new WaitForSeconds(0.25f);
+                    // Poll hard while warming up and idle once live: during Acquiring every lap is a
+                    // chance to open the window, and a quarter-second granularity there was adding up
+                    // to most of what felt like the feed being slow to wake.
+                    if (_phase == Phase.Acquiring) yield return null;
+                    else yield return new WaitForSeconds(0.25f);
                 }
             }
             finally
             {
                 TearDown(anchored, viaServer);
+            }
+        }
+
+        // The snapshot pipeline, on a timer. Deliberately line-for-line what TakeSnapshotCore does
+        // between framing the shot and encoding it: bind the anchored sky, render by hand, make the
+        // render texture current, read it back into an RGB24 Texture2D, release it. Nothing here is a
+        // live-feed-specific way of doing things, because that is exactly what went wrong before.
+        //
+        // WaitForEndOfFrame, not null: rendering a camera and reading pixels back is safe once the
+        // frame's own drawing is done, and doing it mid-frame is how you get a half-drawn read or a
+        // fight with whatever else holds RenderTexture.active.
+        private static IEnumerator RenderLoop()
+        {
+            float next = 0f;
+            while (_phase == Phase.Live)
+            {
+                yield return new WaitForEndOfFrame();
+
+                if (_cam == null || _rt == null || _tex == null) yield break;
+                if (Time.realtimeSinceStartup < next) continue;
+                next = Time.realtimeSinceStartup + 1f / LiveFps;
+
+                RenderTexture previous = RenderTexture.active;
+                try
+                {
+                    // Re-bound every pass rather than once at startup. Binding is what tells the sky
+                    // swap which camera it is bracketing, and a background pass that reset the
+                    // environment would otherwise leave this camera drawing under the player's own
+                    // weather for the rest of the feed - silently, which has already cost a round.
+                    AnchorEnvironment.Bind(_cam);
+
+                    _cam.Render();
+
+                    RenderTexture.active = _rt;
+                    _tex.ReadPixels(new Rect(0f, 0f, _tex.width, _tex.height), 0, 0);
+                    _tex.Apply();
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogError($"TortalPortal: live frame failed (non-fatal, the feed holds its last picture). Reason: {ex}");
+                }
+                finally
+                {
+                    RenderTexture.active = previous;
+                }
             }
         }
 
@@ -236,6 +361,11 @@ namespace TortalPortal
                 Camera gameCam = Camera.main;
                 if (gameCam != null) cam.CopyFrom(gameCam);
 
+                // The same borrowed tonemapper the stored photograph is shot through. Without it the feed
+                // went live and visibly washed out against the still it replaced - the exact moment a
+                // difference between the two is most obvious.
+                PlacementPatch.AttachPostProcessing(go, gameCam, liveFeed: true);
+
                 // Framed exactly like the stored photograph, so going live never jumps the viewpoint.
                 go.transform.position = _pos
                                       + _rot * Vector3.forward * PlacementPatch.CameraForwardOffset
@@ -245,11 +375,23 @@ namespace TortalPortal
                 cam.nearClipPlane = 0.15f;
                 if (gameCam == null) cam.farClipPlane = 300f;
 
-                // With a target texture set, an ENABLED camera renders to it every frame on its own and
-                // never touches the screen - that is the whole live feed.
                 cam.targetTexture = _rt;
                 cam.ResetAspect();
-                cam.enabled = true;
+                // DISABLED on purpose. An enabled camera renders itself, in Unity's own camera loop,
+                // straight into the render texture the album then draws - which is not what the
+                // snapshot does, and the difference is the reason a feed never looked like the
+                // photograph it replaced. RenderLoop drives it by hand instead, exactly as
+                // TakeSnapshotCore does, and reads the result back into a Texture2D the same way.
+                cam.enabled = false;
+
+                // Same format and same flags as the snapshot's readback surface. Allocated once and
+                // reused for the life of the feed - a per-frame Texture2D would be 6MB of garbage at
+                // 1080p thirty times a second.
+                _tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+
+                // Bracket THIS camera's render with the destination's own sky. Bound after the
+                // camera is fully configured, because the swap reads its position.
+                AnchorEnvironment.Bind(cam);
 
                 _cam = cam;
                 return true;
@@ -259,6 +401,8 @@ namespace TortalPortal
                 Plugin.Log.LogError($"TortalPortal: live preview camera could not be built (non-fatal, the stored picture stands in). Reason: {ex}");
                 if (_cam != null) { UnityEngine.Object.Destroy(_cam.gameObject); _cam = null; }
                 if (_rt != null) { UnityEngine.Object.Destroy(_rt); _rt = null; }
+                if (_tex != null) { UnityEngine.Object.Destroy(_tex); _tex = null; }
+                PlacementPatch.ReleaseLiveProfile();
                 return false;
             }
         }
@@ -267,10 +411,21 @@ namespace TortalPortal
         {
             try
             {
+                // Stopped before the camera it drives is destroyed, not after.
+                if (_renderRoutine != null && Plugin.Instance != null)
+                {
+                    Plugin.Instance.StopCoroutine(_renderRoutine);
+                }
+                _renderRoutine = null;
+
                 if (_cam != null) { UnityEngine.Object.Destroy(_cam.gameObject); _cam = null; }
                 if (_rt != null) { UnityEngine.Object.Destroy(_rt); _rt = null; }
+                if (_tex != null) { UnityEngine.Object.Destroy(_tex); _tex = null; }
+                PlacementPatch.ReleaseLiveProfile();
                 if (anchored)
                 {
+                    AnchorEnvironment.Detach();
+                    AnchorPresence.Clear();
                     SnapshotAnchor.Clear();
                     if (viaServer) SectorSubscription.Release();
                 }
@@ -278,7 +433,9 @@ namespace TortalPortal
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"TortalPortal: live preview teardown hit an error (the anchor is still dropped). Reason: {ex}");
-                // Whatever happened above, the anchor must not survive this.
+                // Whatever happened above, neither the anchor nor the borrowed sky may survive this.
+                try { AnchorEnvironment.Detach(); } catch { }
+                try { AnchorPresence.Clear(); } catch { }
                 try { SnapshotAnchor.Clear(); } catch { }
             }
             _phase = Phase.Idle;
