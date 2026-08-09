@@ -1,5 +1,8 @@
 using BepInEx.Configuration;
 using ServerSync;
+using System;
+using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace TortalPortal
@@ -44,17 +47,16 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.2.0",
-            // Raised to match, because 1.2.0 is the first release since the rule was written where a mixed
-            // table genuinely plays differently. The far-photo pass and live previews run through a server
-            // RPC ("TortalPortal_AnchorSectors") that older builds never registered: a 1.1.2 client on a
-            // 1.2.0 server gets a silently dead album - photos never refresh, previews never go live, and
-            // nothing errors. Two players comparing albums would describe different mods. That is exactly
-            // the failure the floor exists to turn into a clear version-mismatch message at the handshake.
+            CurrentVersion = "1.3.1",
+            // Raised to 1.3.0 with the 1.3.1 release, by the owner's call. The strict wire test would
+            // have let 1.2.x stay (no new RPCs since), but 1.3.0 is where the shared artwork landed -
+            // the shipped icon set, the server-streamed icon catalogue - and a mixed 1.2.x table reads
+            // different maps for the same world: markers one player sees and another cannot. The floor
+            // turns that into a clear version-mismatch message at the handshake instead.
             //
             // Raising this is a BREAKING change for anyone still on an older build: they are turned away at
             // the handshake rather than let in to desync. Every client has to update alongside the server.
-            MinimumRequiredVersion = "1.2.0"
+            MinimumRequiredVersion = "1.3.0"
         };
 
         // Where the migration stamp lives. Named here so ConfigMigration can find it in a raw file that
@@ -88,15 +90,19 @@ namespace TortalPortal
         public static ConfigEntry<int> snapshotRefreshIntervalMinutes;
         public static ConfigEntry<bool> remoteSnapshots;
         public static ConfigEntry<bool> livePreviews;
+        public static ConfigEntry<bool> anchoredEnvironment;
+        public static ConfigEntry<bool> anchoredSpawning;
         public static ConfigEntry<CameraResolution> cameraResolution;
         public static ConfigEntry<int> anchorRing;
         public static ConfigEntry<float> anchorTimeoutSeconds;
         public static ConfigEntry<float> anchorSettleRadius;
         public static ConfigEntry<float> portalIndexRefreshSeconds;
+        public static ConfigEntry<bool> shareIconsFromServer;
         public static ConfigEntry<float> uiTextScale;
         public static ConfigEntry<int> uiFontSizeDelta;
         public static ConfigEntry<bool> showPortalPinsOnMap;
         public static ConfigEntry<PortalPinIcon> portalPinIcon;
+        public static ConfigEntry<string> defaultPinIcon;
         public static ConfigEntry<bool> showPreviews;
         public static ConfigEntry<bool> openFavoritesView;
         public static ConfigEntry<bool> focusSearchOnOpen;
@@ -125,7 +131,9 @@ namespace TortalPortal
                                       new AcceptableValueRange<float>(2f, 30f)));
             allowMountedTeleport = config.Bind("3 - Features", "AllowMountedTeleport", true,
                 "If true, teleporting while riding a tamed creature sends the mount through with you and puts you back in the saddle on arrival. Works with anything ridden through the game's own mount controls - vanilla saddles, custom saddle items, OdinMounts and the like. Ships and other steered contraptions are never dragged through.");
-            menuOpenDistance = config.Bind("3 - Features", "MenuOpenDistance", 0.8f,
+            // 1.25 rather than 0.8 from 1.3.1: folded in from the tuning profile. 0.8m meant standing
+            // practically inside the gate before the window would open, which read as unresponsive.
+            menuOpenDistance = config.Bind("3 - Features", "MenuOpenDistance", 1.25f,
                 new ConfigDescription("How close you have to be, in metres, before the destination window and map open by themselves. Vanilla's portal activation range is 5m, which puts the window in your face while you are still walking up. The default of 0.8 means you have to walk right up into the gate, so the window is something you go and get rather than something that ambushes you. Measured HORIZONTALLY, so standing on a raised platform does not add phantom distance. Only affects the window - the portal's visuals keep their own range.",
                                       new AcceptableValueRange<float>(0.1f, 5f)));
             // Local: how sticky the window is once open is a personal taste, not a rule of the world.
@@ -180,12 +188,29 @@ namespace TortalPortal
             snapshotRefreshIntervalMinutes = config.Bind("3 - Features", "SnapshotRefreshIntervalMinutes", 5, "Interval in minutes for the background coroutine to re-photograph portals that already have a picture, so a destination that has been built up or burnt down does not keep showing the old view. 5 rather than 30: a portal only gets photographed while a player is standing near it anyway, so a long interval mostly meant missing the chance entirely. Set to 0 to disable refreshes - portals with no picture at all are still filled in regardless.");
             remoteSnapshots = config.Bind("3 - Features", "EnableRemoteSnapshots", true,
                 "Quietly load the world around ONE never-photographed portal at a time - out where nobody is standing - photograph it and unload it again, so portals nobody visits still get their picture. On a hosted world the hosting player's game does this from its own memory; on a dedicated server (which draws nothing itself) each player's game asks the server for the far portal's surroundings, photographs it and hands the picture back. Costs whoever is doing it a few seconds of background zone loading per portal. Off returns to photographs only being taken where somebody actually walks.");
-            livePreviews = config.Bind("3 - Features", "EnableLivePreviews", true,
-                "Open a portal's picture full-size and, instead of the stored photograph, watch the destination LIVE - real weather, real time of day, rendered by your own game through the same anchor the background camera uses. The stored still shows while the far world streams in, then the feed takes over. Costs a held-open patch of far world for exactly as long as the album is open. Server-synced: turning it off on the server turns it off for everyone.");
-            cameraResolution = config.Bind("3 - Features", "CameraResolution", CameraResolution.Res720p,
+            // EXPERIMENTAL, and off. The stored photograph is the shipped feature and it is finished;
+            // this is the same machinery driven continuously. 1.3.1 fixed the two failures that
+            // earned the label - the one-view-per-visit teardown leak and the temporal-AA shimmer -
+            // so what keeps it experimental now is cost and the warm-up, not correctness.
+            livePreviews = config.Bind("3 - Features", "EnableLivePreviews", false,
+                "EXPERIMENTAL, off by default. Open a portal's picture full-size and, instead of the stored photograph, watch the destination LIVE - real weather, real time of day, rendered by your own game through the same anchor the background camera uses. It works, and it is genuinely the best way to see where a gate goes. Known rough edge: a warm-up of several seconds on a large or distant destination before the feed opens. Understand what it actually does before turning it on: this is not a video, it is your game BUILDING somewhere else and holding it standing while you watch - terrain, trees, buildings and creatures all really there, sized by AnchorZoneRing, and on a dedicated server all of it crosses the wire to you first. It is by far the most expensive thing this mod does. If your framerate suffers, turn AnchorZoneRing down before turning this off. Server-synced: the server's setting is final for everyone.");
+            anchoredEnvironment = config.Bind("3 - Features", "AnchoredEnvironment", true,
+                "Give a far-off portal its OWN sky. Valheim keeps one sky, one sun, one set of weather and one field of grass, all welded to wherever you are standing - so without this a camera in the Ashlands photographs real Ashlands ground under YOUR weather: no ash rain, no ashen sky, no grass. On, the anchored camera gets the destination's own fog, sun, ambient light, weather particles and grass for the fraction of a second it is drawing, and your own view is put back untouched. Costs a copy of the weather effects and a patch of grass at the far end, both of which clean themselves up. Off returns to photographs and feeds wearing your local weather.");
+            // ON by default from 1.3.1, reversing the 1.3.0 call. Shipped off, the flagship view - a
+            // LIVE window onto somewhere else - opened onto a world standing perfectly still, which
+            // read as broken rather than cautious; a destination is supposed to look inhabited. The
+            // description still says plainly what it costs, and off remains one click away for an
+            // admin who wants glances to change nothing.
+            anchoredSpawning = config.Bind("3 - Features", "AnchoredSpawning", true,
+                "Let wildlife appear at a portal's destination while somebody is looking at it. Valheim only makes creatures where a player is standing, which is why a far-off gate can be fully loaded, correctly lit, weather and all, and still look like nowhere anybody lives. On, the anchored camera counts as a presence and the destination's own spawners run normally - and promptly, without vanilla's ten-second spawner warm-up. UNDERSTAND WHAT IT DOES: the creatures are REAL. They are written into the world, they are simulated by whoever is watching, and they remain after the view closes - so browsing an album of eight gates can seed eight neighbourhoods with monsters that another player later walks into. It also makes the watching client responsible for simulating a place it is not standing in. Off, destinations show the world and whatever already lives there, and looking at a gate changes nothing. Only a LIVE view does this, never the background photographer - an unattended camera walking the world stocking it with monsters is not a thing anybody asked for.");
+            // 1080p by default from 1.3.1. It costs real bandwidth - see the description - but a
+            // photograph you open FULL SCREEN at 720p is visibly soft, which is the whole point of it.
+            cameraResolution = config.Bind("3 - Features", "CameraResolution", CameraResolution.Res1080p,
                 "What the portal camera renders at - stored snapshots and the live feed both. Higher looks better and costs more: stored pictures live on the portal itself and travel to every player, so 1080p roughly doubles that traffic against 720p. Applies to new photographs; existing ones keep the size they were taken at.");
-            anchorRing = config.Bind("3 - Features", "AnchorZoneRing", 1,
-                new ConfigDescription("How much world the far camera loads around a portal, in rings of 64m zones: 1 = a 3x3 block (192m), 2 = a 5x5 block (320m). The photograph's foreground either way - 2 pushes the fully-detailed ground further out at more than double the loading cost. Hard-capped at 2: a wider ring is a guaranteed hitch on any hardware.",
+            // 2 by default from 1.3.1: a 3x3 block puts the horizon barely past the gate, and a
+            // destination photograph exists to show you the country you are stepping into.
+            anchorRing = config.Bind("3 - Features", "AnchorZoneRing", 2,
+                new ConfigDescription("How much world the far camera loads around a portal, in rings of 64m zones: 1 = a 3x3 block (192m), 2 = a 5x5 block (320m). READ THIS BEFORE RAISING IT. This is not a picture-quality dial - it is the amount of REAL WORLD your game builds somewhere you are not standing, and everything else scales off it. Each ring is terrain, vegetation, buildings, containers and creatures, all instantiated for real: 1 is 9 zones, 2 is 25, and a hypothetical 3 would be 49. On a dedicated server every one of those objects is also sent to you over the wire, per portal, per look. Raising it costs loading time before the view appears, memory while it is held, and a hitch when it lands - and with AnchoredSpawning on it also widens the area that gets stocked with monsters. Hard-capped at 2 for that reason; 2 is already the point where a mid-range machine notices. If a destination is slow to appear or the game stutters when you open the album, this is the first thing to turn down, not up.",
                                       new AcceptableValueRange<int>(1, 2)));
             anchorTimeoutSeconds = config.Bind("3 - Features", "AnchorSettleBudgetSeconds", 40f,
                 new ConfigDescription("How long the far camera will wait for a destination to finish streaming in and settle before giving up on the attempt. It never shoots early - an unsettled scene is skipped and retried later, so raising this trades patience for coverage of enormous bases. The live preview uses it too, as the point where it stops waiting for perfection and goes live with what is standing.",
@@ -196,13 +221,29 @@ namespace TortalPortal
             portalIndexRefreshSeconds = config.Bind("3 - Features", "PortalIndexRefreshSeconds", 10f,
                 new ConfigDescription("How often the server rescans the world for portals and republishes the destination list. Renames, new portals and demolitions show up within this window. Only republished when something actually changed.",
                                       new AcceptableValueRange<float>(5f, 300f)));
+
+            // Server-synced, because it decides whether the server spends bandwidth at all. The art itself is
+            // cosmetic, but the traffic is the server's to authorise - and an admin who wants a world where
+            // nothing but the shipped icons ever appears can have one by turning this off.
+            shareIconsFromServer = config.Bind("3 - Features", "ShareIconsFromServer", true,
+                "Offer the server's own map icons to every player. Drop PNGs into the TortalPortalPins folder beside the server's plugin and each client downloads the ones it does not already have, once, caching them by content - so a portal marked with your artwork looks the same to everyone with nothing to install. Icons a client already has (including the ones that ship with the mod) are never sent. Off means each player sees only the icons on their own disk.");
             
             // Local, like the rest of the map and UI preferences below: where a player likes their own map
             // marked is not the server's business.
             showPortalPinsOnMap = config.Bind("3 - Features", "ShowPortalPinsOnMap", true,
                 "Marks every portal in the destination list on the large map while that window is open, labelled with its name. The markers are never saved and are removed when the window closes, so they cannot silt up your own pin list.");
             portalPinIcon = config.Bind("3 - Features", "PortalPinIcon", PortalPinIcon.Rune,
-                "Which map icon to use for those markers. Icon0-Icon4 are the five icons vanilla offers in its own map-pin menu. Rune is TortalPortal's own glyph. Custom uses a TortalPortalPin.png dropped in the plugin folder (any size, transparency respected), falling back to Rune when the file is missing.");
+                "Which map icon to use for portals that have not been given one of their own. Icon0-Icon4 are the five icons vanilla offers in its own map-pin menu. Rune is TortalPortal's own glyph. Custom uses whichever icon DefaultPinIcon names.");
+
+            // Named rather than a magic filename. Until 1.3.1, Custom meant one hard-coded file called
+            // TortalPortalPin.png - which made no sense once a whole library existed and, worse, once the
+            // server could send icons this player never had a file for at all. Naming one is the only
+            // answer that works for a downloaded icon, and it is the player's own choice rather than
+            // whatever happened to sort first.
+            defaultPinIcon = config.Bind("3 - Features", "DefaultPinIcon", "",
+                new ConfigDescription(
+                    "Which icon PortalPinIcon = Custom should draw, without the .png. The dropdown lists every icon installed in the TortalPortalPins folder; you can also type the name of one the server has sent you, which the list cannot know about at startup. Empty uses a TortalPortalPin.png beside the plugin if you have one, and falls back to the Rune pin when neither is available.",
+                    new SuggestedList(InstalledPinIconNames())));
 
             // Client-local UI shape. What a player's own window looks like is not the server's business.
             showPreviews = config.Bind("3 - Features", "ShowDestinationPreviews", true,
@@ -240,11 +281,14 @@ namespace TortalPortal
             configSync.AddConfigEntry(snapshotRefreshIntervalMinutes);
             configSync.AddConfigEntry(remoteSnapshots);
             configSync.AddConfigEntry(livePreviews);
+            configSync.AddConfigEntry(anchoredEnvironment);
+            configSync.AddConfigEntry(anchoredSpawning);
             configSync.AddConfigEntry(cameraResolution);
             configSync.AddConfigEntry(anchorRing);
             configSync.AddConfigEntry(anchorTimeoutSeconds);
             configSync.AddConfigEntry(anchorSettleRadius);
             configSync.AddConfigEntry(portalIndexRefreshSeconds);
+            configSync.AddConfigEntry(shareIconsFromServer);
 
             // Pushes anything that moved into its new home, stamps the file and saves it.
             ConfigMigration.Finish(config, configVersion);
@@ -272,6 +316,51 @@ namespace TortalPortal
 
         // An enum entry can also be poisoned in the file (BepInEx parses what it can, but a cast from a
         // stale int is not bounded). Unknown values fall back to 720p.
+        // A MENU, not a gate.
+        //
+        // ConfigurationManager draws any AcceptableValueList as a combo box, which is the whole point -
+        // picking an icon should not mean typing a filename exactly. But the base class also REFUSES
+        // anything outside the list and clamps it to the first entry, and this list can only ever hold what
+        // was on disk when the game started. An icon the SERVER sends later has no file here to be listed,
+        // so a perfectly good setting would be silently rewritten to something the player never chose.
+        // Offer the choices; enforce nothing.
+        private sealed class SuggestedList : AcceptableValueList<string>
+        {
+            public SuggestedList(string[] values) : base(values) { }
+            public override bool IsValid(object value) => true;
+            public override object Clamp(object value) => value;
+        }
+
+        // Every PNG in the icon folder, for the dropdown above. Deliberately a small standalone scan rather
+        // than a call into TortalPinIcon: this runs inside Plugin.Awake before anything else is wired up,
+        // and the icon library reaches into the synced catalogue, which is not a thing to touch this early.
+        private static string[] InstalledPinIconNames()
+        {
+            List<string> names = new List<string>();
+            try
+            {
+                string dir = Path.GetDirectoryName(Plugin.Instance.Info.Location) ?? "";
+                string folder = Path.Combine(dir, TortalPinIcon.LibraryFolder);
+                if (Directory.Exists(folder))
+                {
+                    foreach (string file in Directory.GetFiles(folder, "*.png", SearchOption.TopDirectoryOnly))
+                    {
+                        string name = Path.GetFileNameWithoutExtension(file);
+                        if (!string.IsNullOrEmpty(name) && !names.Contains(name)) names.Add(name);
+                    }
+                }
+                names.Sort(StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"TortalPortal: could not list the installed map icons for the config dropdown (non-fatal, you can still type a name). Reason: {ex.Message}");
+            }
+
+            // Empty first: "no named default" is the default, and belongs at the head of the menu.
+            names.Insert(0, "");
+            return names.ToArray();
+        }
+
         public static void GetCameraResolution(out int width, out int height)
         {
             CameraResolution r = cameraResolution != null ? cameraResolution.Value : CameraResolution.Res720p;

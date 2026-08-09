@@ -157,7 +157,12 @@ namespace TortalPortal
                 }
 
                 TempSectorZdos.Clear();
-                __instance.FindSectorObjects(subZone, SnapshotAnchor.Ring, 0, TempSectorZdos);
+                // Distant ring, same correction as SnapshotAnchor: 0 asked for no distant objects at
+                // all rather than a few. On a dedicated server this is the ONLY way they can reach a
+                // client - it holds nothing it was not sent - so the empty horizon was doubly
+                // guaranteed out here. Vanilla's own send path uses m_activeDistantArea (ZDOMan
+                // CreateSyncList); a subscribed sector is treated the same as a peer's own.
+                __instance.FindSectorObjects(subZone, SnapshotAnchor.Ring, ZoneSystem.instance.m_activeDistantArea, TempSectorZdos);
                 foreach (ZDO zdo in TempSectorZdos)
                 {
                     if (peer.ShouldSend(zdo)) toSync.Add(zdo);

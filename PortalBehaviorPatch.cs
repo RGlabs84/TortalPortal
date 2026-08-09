@@ -134,15 +134,35 @@ namespace TortalPortal
                 // the window never opened for you at all.
                 Player local = Player.m_localPlayer;
                 bool localPlayerInRange = false;
+
+                // The configuration window is opened deliberately - E at the gate, or the Configure button -
+                // and E reaches roughly two metres further than MenuOpenDistance's 0.8m default. Judged by
+                // the same rule as the destination window it was therefore "out of range" the instant it
+                // appeared, and the out-of-range branch below closed it again on the very next frame: open,
+                // shut, open, shut, for as long as you stood there. It gets the portal's own activation
+                // range instead, which is the distance at which the gate is meaningfully yours to edit.
+                bool configOpenHere = PortalUIManager.IsConfigUIVisible() && PortalUIManager.CurrentSourcePortal == __instance;
+
                 if (local != null && !local.IsTeleporting())
                 {
-                    float openRange = Mathf.Min(Configuration.menuOpenDistance.Value, __instance.m_activationRange);
+                    float openRange = configOpenHere
+                        ? __instance.m_activationRange
+                        : Mathf.Min(Configuration.menuOpenDistance.Value, __instance.m_activationRange);
                     // A little further out to close than to open, so hovering on the boundary does not
                     // strobe the window. How much further is MenuCloseMargin.
                     float range = PortalUIManager.IsUIVisible() && PortalUIManager.CurrentSourcePortal == __instance
                         ? openRange + Mathf.Max(0f, Configuration.menuCloseMargin.Value)
                         : openRange;
 
+                    // TODO (flagged, not yet fixed): reported from play - the window opens about
+                    // 1-1.2m IN FRONT of the gate whatever MenuOpenDistance is set to, and not at
+                    // all when you stand at the gate itself. Suspicion is that m_proximityRoot is
+                    // offset FORWARD on the vanilla portal prefab, not centred on it, so this test
+                    // measures a disc that hangs out in front rather than one centred on the stones.
+                    // Wanted instead: the trigger centred on the portal, protruding ~0.3m. VERIFY
+                    // the prefab's local offset before changing anything - if that is the cause the
+                    // fix is to measure from the portal transform, not from m_proximityRoot.
+                    //
                     // HORIZONTAL distance only. m_proximityRoot sits above the ground while a player's
                     // transform is down at their feet, so a full 3D measure always carried a vertical
                     // component of roughly a metre - which is why no MenuOpenDistance below 1 could ever

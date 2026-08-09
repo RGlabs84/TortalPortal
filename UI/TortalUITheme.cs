@@ -70,7 +70,7 @@ namespace TortalPortal
 
         private static Texture2D _railTop, _railBottom, _railLeft, _railRight;
         private static Texture2D _cornerTL, _cornerTR, _cornerBL, _cornerBR;
-        private static Texture2D _crestTop, _crestBottom, _diamond, _heart;
+        private static Texture2D _crestTop, _crestBottom, _diamond, _heart, _dot;
         private static Texture2D _panel, _white;
         private static Texture2D _btnNormal, _btnHover, _btnActive;
         private static Texture2D _rowNormal, _rowHover, _rowActive, _selection;
@@ -130,6 +130,7 @@ namespace TortalPortal
             _crestBottom = BuildCrest(true);
             _diamond = BuildDiamond(14);
             _heart = BuildHeart(28);
+            _dot = BuildDot(24);
 
             _panel = BuildPanel(64);
             _white = BuildSolid(Color.white);
@@ -158,7 +159,7 @@ namespace TortalPortal
                 _railTop, _railBottom, _railLeft, _railRight,
                 _cornerTL, _cornerTR, _cornerBL, _cornerBR,
                 _crestTop, _crestBottom, _diamond, _heart,
-                _panel, _white,
+                _panel, _white, _dot,
                 _btnNormal, _btnHover, _btnActive,
                 _rowNormal, _rowHover, _rowActive, _selection,
                 _fieldTex
@@ -170,7 +171,7 @@ namespace TortalPortal
 
             _railTop = _railBottom = _railLeft = _railRight = null;
             _cornerTL = _cornerTR = _cornerBL = _cornerBR = null;
-            _crestTop = _crestBottom = _diamond = _heart = null;
+            _crestTop = _crestBottom = _diamond = _heart = _dot = null;
             _panel = _white = null;
             _btnNormal = _btnHover = _btnActive = null;
             _rowNormal = _rowHover = _rowActive = _selection = null;
@@ -265,6 +266,18 @@ namespace TortalPortal
         public static void DrawSelection(Rect r)
         {
             GUI.DrawTexture(r, _selection);
+        }
+
+        // A filled circle, baked white and tinted here - the recording light on the live-feed badge. Drawn
+        // from a texture rather than a text glyph for the same reason the heart is: a font that happens not
+        // to carry the character would silently draw nothing, and this is the one indicator that must never
+        // fail to appear.
+        public static void DrawDot(Rect r, Color c)
+        {
+            Color prev = GUI.color;
+            GUI.color = c;
+            GUI.DrawTexture(r, _dot, ScaleMode.ScaleToFit);
+            GUI.color = prev;
         }
 
         // The favorite mark: a heart that turns gold when starred, a grey ghost when not. Drawn from our own
@@ -520,6 +533,38 @@ namespace TortalPortal
             p.Disc(mid + 25f, 14f, 1.5f);
 
             return p.Bake();
+        }
+
+        // A flat WHITE circle, tinted at draw time so one texture serves the live red and the warming amber
+        // and anything after them. 2x2 supersampled, like the heart, so the edge is clean at badge size.
+        private static Texture2D BuildDot(int size)
+        {
+            Texture2D tex = New(size, size, TextureWrapMode.Clamp, UnityEngine.FilterMode.Bilinear);
+            Color[] px = new Color[size * size];
+            float mid = (size - 1) * 0.5f;
+            float r = size * 0.42f;
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float hit = 0f;
+                    for (int sy = 0; sy < 2; sy++)
+                    {
+                        for (int sx = 0; sx < 2; sx++)
+                        {
+                            float dx = x + (sx + 0.5f) * 0.5f - 0.5f - mid;
+                            float dy = y + (sy + 0.5f) * 0.5f - 0.5f - mid;
+                            if (Mathf.Sqrt(dx * dx + dy * dy) <= r) hit += 0.25f;
+                        }
+                    }
+                    px[y * size + x] = new Color(1f, 1f, 1f, hit);
+                }
+            }
+
+            tex.SetPixels(px);
+            tex.Apply(false);
+            return tex;
         }
 
         private static Texture2D BuildDiamond(int size)

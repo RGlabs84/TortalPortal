@@ -40,6 +40,7 @@ namespace TortalPortal
             public string SearchKey;
             public bool Locked;
             public bool Fav;
+            public string Icon;
             public DetailState Details;
             public Minimap.PinData MapPin;
         }
@@ -61,6 +62,22 @@ namespace TortalPortal
         private string _configName = "";
         private string _configPin = "";
         private bool _configHasPin;
+
+        // Set when the configuration window was opened from the destination window rather than by pressing
+        // E at the gate, so Save and Cancel can put the player back where they came from.
+        private bool _returnToSelect;
+
+        // Whether this portal should be starred. Staged rather than applied on click, because this window
+        // has a Cancel button and a favorite toggled from here must obey it like everything else does.
+        //
+        // It lives here at all because the destination list deliberately omits the portal you are standing
+        // at - correctly, since you cannot travel to where you already are - which left the one gate you use
+        // most as the one gate you could not star without walking to another portal first.
+        private bool _configFavorite;
+
+        // The portal's own map icon, as a name in TortalPinIcon's library. Empty means "leave it to whoever is
+        // looking at the map", which is what every portal holds until somebody picks one.
+        private string _configIcon = "";
 
         // The quick PIN modal: the small "PIN, Enter, gone" window that locked portals get when launched
         // from the favorites strip or a map marker, instead of hauling the full window out. While it is up
@@ -331,6 +348,11 @@ namespace TortalPortal
 
         public static bool IsUIVisible() => _instance != null && _instance._isVisible;
 
+        // The configuration window specifically. It is opened DELIBERATELY - by pressing E at the gate, or
+        // by the Configure button - so it must not be governed by the same proximity rule as the destination
+        // window, which opens by itself and so is fair to close by itself.
+        public static bool IsConfigUIVisible() => _instance != null && _instance._isVisible && _instance._isConfigMode;
+
         public static void ShowUI(TeleportWorld sourcePortal)
         {
             Configuration.LogDebug("PortalUIManager.ShowUI called.");
@@ -390,6 +412,11 @@ namespace TortalPortal
             _instance._pinTarget = null;
             _instance._pinModalInput = "";
 
+            // Where to go when this window closes. Reached from the destination window's Configure button,
+            // it should hand you back to the list you were reading - closing out entirely meant walking
+            // away from the gate and back again just to see the change you had made.
+            _instance._returnToSelect = _instance._isVisible && !_instance._isConfigMode;
+
             CurrentSourcePortal = targetPortal;
             _instance._isConfigMode = true;
             _instance._isVisible = true;
@@ -398,6 +425,10 @@ namespace TortalPortal
             _instance._configName = zdo.GetString(ZDOVars.s_tag);
             _instance._configPin = zdo.GetString("PortalPIN");
             _instance._configHasPin = !string.IsNullOrEmpty(_instance._configPin);
+            _instance._configIcon = zdo.GetString(TortalPinIcon.ZdoKey) ?? "";
+            _instance._configFavorite = Favorites.IsFavorite(zdo.GetPosition());
+            _instance._iconPulloutOpen = false;
+            _instance._iconScroll = Vector2.zero;
 
             if (Minimap.instance != null) Minimap.instance.SetMapMode(Minimap.MapMode.None);
         }
@@ -409,6 +440,7 @@ namespace TortalPortal
             {
                 _instance._isVisible = false;
                 _instance._isConfigMode = false;
+                _instance._iconPulloutOpen = false;
                 _instance._selected = null;
                 _instance._showPinPrompt = false;
                 _instance._pinInput = "";
@@ -437,6 +469,10 @@ namespace TortalPortal
 
         // ---- data ------------------------------------------------------------------------------------------
 
+        // The portal being stood at: marked on the map, never listed as somewhere to go. Kept out of
+        // _entries entirely so nothing that walks the destination list can ever select or travel to it.
+        private PortalEntry _sourceEntry;
+
         private void BuildEntries()
         {
             _entries.Clear();
@@ -456,10 +492,10 @@ namespace TortalPortal
 
             Vector3 origin = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
 
+            _sourceEntry = null;
+
             foreach (PortalRegistry.Entry src in PortalRegistry.GetEntries())
             {
-                if (src.Id == sourceId) continue;
-
                 string tag = Sanitise(src.Tag);
                 if (string.IsNullOrEmpty(tag)) tag = "Unnamed portal";
                 string creator = Sanitise(src.Creator);
@@ -477,7 +513,8 @@ namespace TortalPortal
                     Biome = WorldGenerator.instance != null ? WorldGenerator.instance.GetBiome(pos) : Heightmap.Biome.None,
                     Distance = Vector3.Distance(origin, pos),
                     Locked = src.Locked,
-                    Fav = Favorites.IsFavorite(src.Id)
+                    Fav = Favorites.IsFavorite(pos),
+                    Icon = src.Icon
                 };
 
                 e.SearchKey = tag.ToLowerInvariant();
@@ -485,10 +522,41 @@ namespace TortalPortal
                           $"\n<size=11><color={TortalUITheme.HexMuted}>{PrettyBiome(e.Biome)}   ·   " +
                           $"{Mathf.RoundToInt(e.Distance)}m   ·   {creator}</color></size>";
 
+                // The gate you are standing at is deliberately not a destination - you cannot travel to where
+                // you already are - but it still belongs ON THE MAP. Leaving it off meant the one portal you
+                // had just given an icon to was the one portal that never showed it, which read exactly like
+                // the icon not working. Held aside rather than listed, so it is drawn and never selectable.
+                if (src.Id == sourceId)
+                {
+                    e.Tag = $"{tag}  (here)";
+                    // Read straight off the portal in front of us rather than out of the index, so an icon
+                    // set moments ago shows immediately instead of waiting on the server's next publish.
+                    e.Icon = LiveIconOf(CurrentSourcePortal) ?? src.Icon;
+                    _sourceEntry = e;
+                    continue;
+                }
+
                 _entries.Add(e);
             }
 
             SortEntries();
+        }
+
+        // The icon currently written on a portal's own ZDO, or null when it cannot be read. Only used for
+        // the portal being stood at, which is the one case where this client has the ZDO to hand.
+        private static string LiveIconOf(TeleportWorld portal)
+        {
+            try
+            {
+                if (portal == null) return null;
+                ZNetView nview = portal.GetComponent<ZNetView>();
+                if (nview == null || !nview.IsValid()) return null;
+                return nview.GetZDO().GetString(TortalPinIcon.ZdoKey) ?? "";
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         // Favorites first, then alphabetical - one order shared by the full list and the strip, so a portal
@@ -533,6 +601,18 @@ namespace TortalPortal
             }
 
             if (!_isVisible) return;
+
+            // Logging out does NOT destroy this object - it is DontDestroyOnLoad, so it survives the world
+            // unload on purpose - and nothing was closing the window on the way out. It carried straight
+            // through to the start screen and sat there drawing over the main menu, with no portal left to
+            // close it and no way to dismiss it. Anything that ends the session ends the window.
+            if (ZNet.instance == null || Player.m_localPlayer == null)
+            {
+                Configuration.LogDebug("World or player is gone; closing the portal window.");
+                HideUI();
+                return;
+            }
+
             TortalUITheme.EnsureBuilt();
 
             // Escape: the PIN modal cancels outright, otherwise it backs out of a field without closing the
@@ -641,9 +721,12 @@ namespace TortalPortal
             // came down to whether a field happened to be focused at that moment. This button never cares.
             if (SecurityPatch.CanConfigure(CurrentSourcePortal))
             {
+                // "Name & PIN" until 1.3.0, which added the map-icon grid to the same window and left the
+                // label describing two of its three jobs - so the way to set an icon was a button that never
+                // mentioned icons. Named for the window it opens instead, which cannot go stale again.
                 float editW = TortalUITheme.S(128f);
                 buttonEdge = closeRect.x - editW - 8f;
-                if (GUI.Button(new Rect(buttonEdge, search.y, editW, rowH), "Name & PIN", TortalUITheme.Button))
+                if (GUI.Button(new Rect(buttonEdge, search.y, editW, rowH), "Configure", TortalUITheme.Button))
                 {
                     ShowConfigUI(CurrentSourcePortal);
                     return;
@@ -778,7 +861,7 @@ namespace TortalPortal
                 {
                     // Click handling runs in its own event pass, never between Layout and Repaint, so the
                     // resort cannot desync IMGUI's control count.
-                    Favorites.Toggle(e.Id);
+                    Favorites.Toggle(e.Pos);
                     e.Fav = !e.Fav;
                     resort = true;
                 }
@@ -881,6 +964,14 @@ namespace TortalPortal
         // Vanilla marks nothing on the map for a portal, so a list of names was the only clue where any of
         // them actually were. These are transient - never saved, and removed the moment the window closes -
         // so they cannot silt up somebody's pin list.
+        // Everything that gets a marker: every destination, plus the gate underfoot. Selection, travel and
+        // the destination list all read _entries directly and so are untouched by the extra one.
+        private IEnumerable<PortalEntry> MarkableEntries()
+        {
+            foreach (PortalEntry e in _entries) yield return e;
+            if (_sourceEntry != null) yield return _sourceEntry;
+        }
+
         private void AddMapPins()
         {
             ClearMapPins();
@@ -894,24 +985,77 @@ namespace TortalPortal
                 // Our own pins ride on a vanilla pin type and then have their sprite swapped: AddPin stamps
                 // m_icon from the type, and the map's UI element reads pin.m_icon when it is built - so a
                 // swap made here, before the next pin update, is all it takes.
-                Minimap.PinType icon = vanillaIcon ? (Minimap.PinType)(int)chosen : Minimap.PinType.Icon4;
-                Sprite customSprite = vanillaIcon ? null : TortalPinIcon.Get(chosen);
+                Minimap.PinType fallbackType = vanillaIcon ? (Minimap.PinType)(int)chosen : Minimap.PinType.Icon4;
+                Sprite fallbackSprite = vanillaIcon ? null : TortalPinIcon.Get(chosen);
 
-                foreach (PortalEntry e in _entries)
+                foreach (PortalEntry e in MarkableEntries())
                 {
-                    e.MapPin = Minimap.instance.AddPin(e.Pos, icon, e.Tag, false, false);
+                    // A portal's own icon wins, and quietly loses to the player's setting when this client
+                    // cannot draw it yet - somebody marking their gates with icons this player does not have
+                    // should not blank the map, and an icon still arriving from the server should not either.
+                    Sprite own = TortalPinIcon.GetByName(e.Icon);
+                    Sprite sprite = own ?? fallbackSprite;
+                    Minimap.PinType type = own != null ? Minimap.PinType.Icon4 : fallbackType;
+
+                    e.MapPin = Minimap.instance.AddPin(e.Pos, type, e.Tag, false, false);
                     if (e.MapPin != null)
                     {
-                        if (customSprite != null) e.MapPin.m_icon = customSprite;
+                        if (sprite != null) e.MapPin.m_icon = sprite;
                         _pins.Add(e.MapPin);
                     }
                 }
 
+                _styledRevision = TortalPinLibrary.Revision;
                 Configuration.LogDebug($"Marked {_pins.Count} portals on the map.");
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"TortalPortal: could not mark portals on the map (non-fatal). Reason: {ex}");
+            }
+        }
+
+        // The other half of the revision check in StyleMapPins. A marker built while its picture was still
+        // coming down from the server keeps drawing the fallback until something re-resolves it, and the map
+        // may well be open the whole time. Nothing is added or removed here - only m_icon is repointed - so
+        // the marker set, the labels and the player's selection all survive untouched.
+        private void RefreshPinIcons()
+        {
+            try
+            {
+                if (Minimap.instance == null) return;
+
+                PortalPinIcon chosen = Configuration.portalPinIcon.Value;
+                bool vanillaIcon = (int)chosen < 100;
+                Sprite fallbackSprite = vanillaIcon ? null : TortalPinIcon.Get(chosen);
+
+                bool changed = false;
+                foreach (PortalEntry e in MarkableEntries())
+                {
+                    if (e.MapPin == null) continue;
+
+                    Sprite own = TortalPinIcon.GetByName(e.Icon);
+                    Sprite sprite = own ?? fallbackSprite;
+                    if (sprite == null || e.MapPin.m_icon == sprite) continue;
+
+                    e.MapPin.m_icon = sprite;
+
+                    // Vanilla reads m_icon EXACTLY ONCE - inside the "element does not exist yet" branch of
+                    // Minimap.UpdatePins, where it does `m_iconElement.sprite = m_icon`. For a marker that
+                    // has already been drawn, assigning m_icon on its own is silently ignored no matter how
+                    // many pin updates are requested, because the element is still there and that branch
+                    // never runs again. So the live element is repointed here as well: m_icon for whenever
+                    // the marker is next rebuilt, the sprite for the one on screen right now.
+                    if (e.MapPin.m_iconElement != null) e.MapPin.m_iconElement.sprite = sprite;
+                    changed = true;
+                }
+
+                // Only for markers that have no element yet - scrolled off screen, or added since the last
+                // pass. The ones on screen were just updated directly above.
+                if (changed) Minimap.instance.m_pinUpdateRequired = true;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: refreshing the map marker icons failed (non-fatal). Reason: {ex}");
             }
         }
 
@@ -959,9 +1103,21 @@ namespace TortalPortal
         // Colour has to be re-applied here rather than set once, because UpdatePins assigns
         // m_iconElement.color unconditionally on every run. Running after it is what makes the red stick;
         // it also means unselected markers need no reset, since vanilla has just painted them itself.
+        private static int _styledRevision = -1;
+
         public static void StyleMapPins()
         {
             if (_instance == null || _instance._pins.Count == 0) return;
+
+            // An icon that arrived from the server since the map was opened, or a catalogue that changed
+            // under us, means a marker currently drawing the player's fallback now has its real picture on
+            // disk. Re-resolving is only done when that has actually happened - the common case is one
+            // integer compare per pass.
+            if (_styledRevision != TortalPinLibrary.Revision)
+            {
+                _styledRevision = TortalPinLibrary.Revision;
+                _instance.RefreshPinIcons();
+            }
 
             Minimap.PinData selected = _instance._selected != null ? _instance._selected.MapPin : null;
 
@@ -979,6 +1135,16 @@ namespace TortalPortal
                         ? new Vector3(SelectedPinScale, SelectedPinScale, 1f)
                         : Vector3.one;
                     if (pin.m_uiElement.localScale != wanted) pin.m_uiElement.localScale = wanted;
+                }
+
+                // Vanilla sizes every marker as a SQUARE - m_pinSizeLarge on both axes - because every icon it
+                // ships is square, so nothing ever needed this flag. A custom PNG has no such guarantee, and
+                // without this a wide image is stretched to fill the square instead of fitting inside it.
+                // Set on every pin every pass for the same reason the scale is: the element is rebuilt from
+                // the prefab whenever the marker scrolls back into view.
+                if (pin.m_iconElement != null && !pin.m_iconElement.preserveAspect)
+                {
+                    pin.m_iconElement.preserveAspect = true;
                 }
 
                 if (!isSelected) continue;
@@ -1250,12 +1416,15 @@ namespace TortalPortal
 
             // The footer says what the eye is looking at: a live destination, a feed still warming (the
             // far world streaming in behind the stored still), or just the photograph.
-            string feedState = live != null ? "LIVE   ·   right-drag to look, wheel to zoom"
-                : LivePreview.Active ? "going live..."
-                : "photograph";
+            // The state badge goes ON the picture, not into the footer sentence. Spliced in among "arrows
+            // flip through portals" and drawn in the same muted gold, the one thing on screen that changes
+            // under you was the least visible thing on it - you had to already know where to look.
+            DrawFeedBadge(body, live != null, LivePreview.Active);
+
+            string controls = live != null ? "right-drag to look, wheel to zoom   ·   " : "";
             GUI.Label(TortalUITheme.FooterLine(win),
                       $"{PrettyBiome(_selected.Biome)}   ·   {(int)_selected.Pos.x}, {(int)_selected.Pos.y}, {(int)_selected.Pos.z}" +
-                      $"   ·   {feedState}   ·   arrows flip through portals   ·   click anywhere to close",
+                      $"   ·   {controls}arrows flip through portals   ·   left-click to close",
                       TortalUITheme.Footer);
 
             // The page-turn arrows, parked in the side gutters outside the frame.
@@ -1268,13 +1437,20 @@ namespace TortalPortal
             if (GUI.Button(prev, "<", TortalUITheme.Primary)) { CyclePreview(-1); cycled = true; }
             if (GUI.Button(next, ">", TortalUITheme.Primary)) { CyclePreview(1); cycled = true; }
 
-            // Drawn last so it sits over the frame. GUIStyle.none keeps it genuinely invisible - the row style's
-            // hover tint would wash the entire screen gold. IMGUI fires EVERY control under a click, so a click
-            // on an arrow also lands here - the hover check is what keeps a page-turn from closing the album.
+            // Close on a LEFT click, handled as a raw event rather than as a full-screen GUI.Button.
+            //
+            // A GUI.Button fires on ANY mouse button, so letting go of the RIGHT button after right-dragging
+            // the live camera around counted as a click on the close overlay - the feed shut itself the
+            // moment you finished looking at it, which is the one thing you were there to do. Right-drag
+            // belongs to the camera; only a left click means "I am done here".
+            //
+            // The arrow check stays: IMGUI hands the same click to every control under it, so a page-turn
+            // would otherwise close the album on its way through.
             bool overArrow = ev != null && (prev.Contains(ev.mousePosition) || next.Contains(ev.mousePosition));
-            if (GUI.Button(new Rect(0f, 0f, Screen.width, Screen.height), GUIContent.none, GUIStyle.none) && !cycled && !overArrow)
+            if (ev != null && ev.type == EventType.MouseUp && ev.button == 0 && !cycled && !overArrow)
             {
                 _previewExpanded = false;
+                ev.Use();
             }
         }
 
@@ -1308,10 +1484,148 @@ namespace TortalPortal
             // _previewExpanded stays true - that is the whole point.
         }
 
+        // Empty string first - "no icon of its own" is the default and belongs at the head of the cycle - then
+        // every icon installed here. A name the portal already carries but this client has no file for is kept
+        // in the list rather than dropped: opening the window on a friend's portal must not silently strip a
+        // choice made by somebody whose modpack has the picture.
+        private List<string> ConfigIconChoices()
+        {
+            List<string> choices = new List<string> { "" };
+            choices.AddRange(TortalPinIcon.Names);
+            if (!string.IsNullOrEmpty(_configIcon) && !choices.Contains(_configIcon)) choices.Add(_configIcon);
+            return choices;
+        }
+
+        private static string ConfigIconLabel(string icon, Sprite resolved)
+        {
+            if (string.IsNullOrEmpty(icon)) return "Default";
+
+            // Pretty() only ever changes how it READS. The filename stays the id - it is what goes on the
+            // portal's ZDO and what the server's catalogue is keyed by.
+            string shown = TortalPinIcon.Pretty(icon);
+            if (resolved != null) return shown;
+
+            // "Not here" and "on its way here" are different answers and the player deserves to know which.
+            return TortalPinLibrary.Find(icon) != null
+                ? $"{shown}  <color={TortalUITheme.HexMuted}>(arriving from the server...)</color>"
+                : $"{shown}  <color={TortalUITheme.HexMuted}>(not installed here)</color>";
+        }
+
+        // ---- the icon grid ---------------------------------------------------------------------------------
+
+        // Two rows inline, always, whatever the library holds. That is what keeps the configuration window a
+        // fixed shape whether a player has three icons or sixty.
+        private const int IconRowsInline = 2;
+
+        private bool _iconPulloutOpen;
+        private Vector2 _iconScroll;
+
+        private static Rect IconCellRect(Rect area, int index, int perRow, float cell)
+        {
+            int row = index / perRow;
+            int col = index % perRow;
+            return new Rect(area.x + col * cell, area.y + row * cell, cell - 4f, cell - 4f);
+        }
+
+        // Returns the index that was clicked this pass, or -1. Drawing and hit-testing together is how IMGUI
+        // wants to be written, and it keeps the inline grid and the pull-out sharing one implementation.
+        private int DrawIconGrid(Rect area, List<string> choices, int count, int perRow, float cell)
+        {
+            int clicked = -1;
+
+            for (int i = 0; i < count && i < choices.Count; i++)
+            {
+                Rect r = IconCellRect(area, i, perRow, cell);
+                string icon = choices[i];
+                bool isCurrent = string.Equals(icon ?? "", _configIcon ?? "", StringComparison.OrdinalIgnoreCase);
+
+                if (isCurrent) TortalUITheme.DrawSelection(r);
+
+                // ImageButton is transparent until hovered and then puts a gold edge round the picture -
+                // built for exactly this, back when the only image button was the preview thumbnail.
+                if (GUI.Button(r, GUIContent.none, TortalUITheme.ImageButton)) clicked = i;
+
+                if (string.IsNullOrEmpty(icon))
+                {
+                    // "No icon of its own" - the portal takes whatever this player's own setting says.
+                    GUI.Label(r, "—", TortalUITheme.Note);
+                    continue;
+                }
+
+                Sprite sprite = TortalPinIcon.GetByName(icon);
+                if (sprite != null && sprite.texture != null)
+                {
+                    Rect inner = new Rect(r.x + 4f, r.y + 4f, r.width - 8f, r.height - 8f);
+                    GUI.DrawTexture(inner, sprite.texture, ScaleMode.ScaleToFit, true);
+                }
+                else
+                {
+                    // Named but not drawable here - either still coming down or genuinely absent. Either way
+                    // the cell stays clickable, because a choice made by somebody whose install has the
+                    // picture must not be silently strippable by somebody whose install does not.
+                    GUI.Label(r, "<color=" + TortalUITheme.HexMuted + ">?</color>", TortalUITheme.Note);
+                }
+            }
+
+            return clicked;
+        }
+
+        // Drawn last, over everything, so it reads as sitting on top of the configuration window rather than
+        // inside it. Sides itself against whichever edge has room.
+        private void DrawIconPullout(Rect win, List<string> choices)
+        {
+            float pw = Mathf.Min(Screen.width - 40f, TortalUITheme.S(340f));
+            float ph = Mathf.Min(Screen.height - 80f, TortalUITheme.S(420f));
+
+            float px = win.xMax + 12f;
+            if (px + pw > Screen.width - 10f) px = win.x - pw - 12f;
+            if (px < 10f) px = Mathf.Max(10f, (Screen.width - pw) * 0.5f);
+
+            Rect pull = new Rect(px, win.y, pw, ph);
+            TortalUITheme.DrawWindow(pull, "Map Icons");
+
+            Rect pbody = TortalUITheme.Body(pull);
+            float cell = TortalUITheme.S(44f);
+
+            // Room for the scrollbar, so the last column is never half-hidden under it.
+            float contentW = pbody.width - TortalUITheme.S(18f);
+            int perRow = Mathf.Max(1, Mathf.FloorToInt(contentW / cell));
+            int rows = Mathf.CeilToInt(choices.Count / (float)perRow);
+            Rect content = new Rect(0f, 0f, contentW, rows * cell);
+
+            _iconScroll = GUI.BeginScrollView(pbody, _iconScroll, content);
+            int clicked = DrawIconGrid(content, choices, choices.Count, perRow, cell);
+            GUI.EndScrollView();
+
+            if (clicked >= 0)
+            {
+                _configIcon = choices[clicked];
+                _iconPulloutOpen = false;
+            }
+
+            GUI.Label(TortalUITheme.FooterLine(pull), $"{choices.Count - 1} icon(s) available", TortalUITheme.Footer);
+        }
+
+        // Leaving the configuration window. Straight back to the destination list when that is where the
+        // player came from, rebuilt so a rename, a new icon or a fresh star is visible immediately rather
+        // than on the next visit; otherwise closed, which is what pressing E at the gate should do.
+        private void CloseConfig()
+        {
+            if (_returnToSelect && CurrentSourcePortal != null)
+            {
+                _returnToSelect = false;
+                _iconPulloutOpen = false;
+                ShowUI(CurrentSourcePortal);
+                return;
+            }
+            HideUI();
+        }
+
         private void DrawConfigUI()
         {
             float w = Mathf.Min(Screen.width - 80f, TortalUITheme.S(540f));
-            float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(440f));
+            // Taller than it was: the icon grid is two rows where the old cycler was one line.
+            float h = Mathf.Min(Screen.height - 80f, TortalUITheme.S(520f));
             Rect win = new Rect(Mathf.Round((Screen.width - w) * 0.5f), Mathf.Round((Screen.height - h) * 0.5f), w, h);
 
             TortalUITheme.DrawWindow(win, "Portal Configuration");
@@ -1328,11 +1642,71 @@ namespace TortalPortal
             _configName = GUI.TextField(new Rect(body.x, y, body.width, fieldH), _configName, 20, TortalUITheme.Field);
             y += fieldH + 16f;
 
-            if (GUI.Button(new Rect(body.x, y, fieldW, fieldH),
-                           _configHasPin ? "PIN lock:  ON" : "PIN lock:  OFF", TortalUITheme.Button))
+            // Hidden entirely when there is only "Default" to choose from - a picker offering one choice is
+            // furniture. Otherwise: two rows of clickable icons, and a way in to the rest.
+            List<string> iconChoices = ConfigIconChoices();
+            if (iconChoices.Count > 1)
+            {
+                GUI.Label(new Rect(body.x, y, body.width, lineH), "Map icon", TortalUITheme.Header);
+                y += lineH + 4f;
+
+                float cell = TortalUITheme.S(44f);
+                int perRow = Mathf.Max(1, Mathf.FloorToInt(body.width / cell));
+                int inlineCapacity = perRow * IconRowsInline;
+                bool overflow = iconChoices.Count > inlineCapacity;
+
+                // The overflow button takes the last cell rather than a whole extra row, so the block is the
+                // same height either way and the eye finds "more" where it already is.
+                int inlineCount = overflow ? inlineCapacity - 1 : iconChoices.Count;
+
+                Rect grid = new Rect(body.x, y, body.width, cell * IconRowsInline);
+                int clicked = DrawIconGrid(grid, iconChoices, inlineCount, perRow, cell);
+                if (clicked >= 0)
+                {
+                    _configIcon = iconChoices[clicked];
+                    _iconPulloutOpen = false;
+                }
+
+                if (overflow)
+                {
+                    Rect more = IconCellRect(grid, inlineCapacity - 1, perRow, cell);
+                    if (GUI.Button(more, $"+{iconChoices.Count - inlineCount}\n▸", TortalUITheme.Button))
+                    {
+                        _iconPulloutOpen = !_iconPulloutOpen;
+                    }
+                }
+
+                y += grid.height + 4f;
+                GUI.Label(new Rect(body.x, y, body.width, lineH),
+                          ConfigIconLabel(_configIcon, TortalPinIcon.GetByName(_configIcon)), TortalUITheme.Value);
+                y += lineH + 12f;
+            }
+            else
+            {
+                _iconPulloutOpen = false;
+            }
+
+            // The two toggles share a row. Widths are clamped rather than fixed so a large UITextScale
+            // narrows them instead of running the Favorite button off the edge of the frame.
+            float toggleW = Mathf.Min(fieldW, (body.width - 12f) * 0.5f);
+            Rect pinBtn = new Rect(body.x, y, toggleW, fieldH);
+            Rect favBtn = new Rect(body.x + toggleW + 12f, y, toggleW, fieldH);
+
+            if (GUI.Button(pinBtn, _configHasPin ? "PIN lock:  ON" : "PIN lock:  OFF", TortalUITheme.Button))
             {
                 _configHasPin = !_configHasPin;
             }
+
+            if (GUI.Button(favBtn, _configFavorite ? "Favorite:  ON" : "Favorite:  OFF", TortalUITheme.Button))
+            {
+                _configFavorite = !_configFavorite;
+            }
+
+            // The same heart the destination list uses, drawn over the left of the button - one texture,
+            // tinted gold when lit and a grey ghost when not, so starred reads identically in both places.
+            float heart = fieldH - TortalUITheme.S(10f);
+            TortalUITheme.DrawHeartMark(new Rect(favBtn.x + 6f, favBtn.y + (fieldH - heart) * 0.5f, heart, heart), _configFavorite);
+
             y += fieldH + 12f;
 
             if (_configHasPin)
@@ -1350,22 +1724,69 @@ namespace TortalPortal
             if (GUI.Button(save, "Save", TortalUITheme.Primary))
             {
                 string finalPin = _configHasPin ? _configPin : "";
-                ZDO zdo = CurrentSourcePortal.GetComponent<ZNetView>().GetZDO();
+                ZNetView nview = CurrentSourcePortal.GetComponent<ZNetView>();
+                ZDO zdo = nview.GetZDO();
+
+                // A write to a ZDO this peer does not own is discarded at the next sync, which is what an
+                // admin editing somebody else's gate would hit - the window would close on a saved message
+                // and nothing would have changed.
+                if (!nview.IsOwner()) nview.ClaimOwnership();
+
                 zdo.Set(ZDOVars.s_tag, _configName);
                 zdo.Set("PortalPIN", finalPin);
+                zdo.Set(TortalPinIcon.ZdoKey, _configIcon ?? "");
+
+                // A favorite is a line in a local file, not ZDO state, and needs no ownership - but it is
+                // written HERE rather than when the button was clicked so that Cancel discards it too.
+                if (_configFavorite != Favorites.IsFavorite(zdo.GetPosition())) Favorites.Toggle(zdo.GetPosition());
                 Player.m_localPlayer.Message(MessageHud.MessageType.Center, "Portal configuration saved.");
-                HideUI();
+                CloseConfig();
                 return;
             }
 
             if (GUI.Button(cancel, "Cancel", TortalUITheme.Primary))
             {
-                HideUI();
+                CloseConfig();
                 return;
             }
 
             GUI.Label(TortalUITheme.FooterLine(win),
                       "A PIN is required from anyone but you and the server admins.", TortalUITheme.Footer);
+
+            // Last, so it draws over the window it belongs to rather than under it.
+            if (_iconPulloutOpen) DrawIconPullout(win, iconChoices);
+        }
+
+        // The broadcast badge in the top-left of the picture: a pulsing light and a word, the way every
+        // camera that has ever been live has said so. Nothing at all while you are looking at a still - a
+        // badge that is always there stops being read.
+        private static void DrawFeedBadge(Rect image, bool isLive, bool warming)
+        {
+            if (!isLive && !warming) return;
+
+            string label = isLive ? "LIVE" : "GOING LIVE";
+
+            // Red for live, amber for warming, and they pulse at different rates so the two states are
+            // told apart at a glance rather than by reading the word.
+            Color light = isLive ? new Color(1.00f, 0.25f, 0.20f, 1f) : new Color(1.00f, 0.72f, 0.20f, 1f);
+            float speed = isLive ? 3.2f : 1.5f;
+            light.a = 0.40f + 0.60f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * speed));
+
+            float pad = TortalUITheme.S(7f);
+            float h = TortalUITheme.S(24f);
+            float dot = TortalUITheme.S(11f);
+            float textW = TortalUITheme.Value.CalcSize(new GUIContent(label)).x;
+
+            Rect pill = new Rect(image.x + pad, image.y + pad, dot + textW + pad * 3f, h);
+
+            // Dark plate under it, because this sits over whatever the destination happens to look like -
+            // a snowfield would swallow amber text entirely.
+            TortalUITheme.DrawFill(pill, new Color(0f, 0f, 0f, 0.66f));
+            TortalUITheme.DrawOutline(pill, new Color(light.r, light.g, light.b, 0.85f), 1f);
+            TortalUITheme.DrawDot(new Rect(pill.x + pad, pill.y + (h - dot) * 0.5f, dot, dot), light);
+
+            Rect textRect = new Rect(pill.x + pad * 2f + dot, pill.y, textW + pad, h);
+            GUI.Label(textRect, $"<color=#FFFFFF>{label}</color>", TortalUITheme.Value);
         }
 
         // ---- preview ---------------------------------------------------------------------------------------
@@ -1375,10 +1796,34 @@ namespace TortalPortal
         // ever want the byte[] overload. Binding it reflectively sidesteps compile-time overload
         // resolution entirely; Valheim's actual Mono runtime resolves it fine at runtime.
         private static MethodInfo _loadImageMethod;
+        private static MethodInfo _loadImageNonReadableMethod;
 
-        // Internal rather than private: TortalPinIcon loads the admin's custom pin PNG through the same shim.
+        // Internal rather than private: TortalPinIcon loads the custom pin PNGs through the same shim.
         internal static void LoadImageViaReflection(Texture2D tex, byte[] data)
         {
+            LoadImageViaReflection(tex, data, markNonReadable: false);
+        }
+
+        // markNonReadable drops the CPU-side copy of the picture once it is on the card, halving what an image
+        // costs to keep. Only safe where the pixels are never read back afterwards, which is why it is opt-in:
+        // the map icons only ever get drawn, while a portal snapshot is handled as data.
+        internal static void LoadImageViaReflection(Texture2D tex, byte[] data, bool markNonReadable)
+        {
+            if (markNonReadable)
+            {
+                if (_loadImageNonReadableMethod == null)
+                {
+                    _loadImageNonReadableMethod = typeof(ImageConversion).GetMethod(
+                        "LoadImage", new[] { typeof(Texture2D), typeof(byte[]), typeof(bool) });
+                }
+                if (_loadImageNonReadableMethod != null)
+                {
+                    _loadImageNonReadableMethod.Invoke(null, new object[] { tex, data, true });
+                    return;
+                }
+                // No three-argument overload on this runtime: load it readable rather than not at all.
+            }
+
             if (_loadImageMethod == null)
             {
                 _loadImageMethod = typeof(ImageConversion).GetMethod("LoadImage", new[] { typeof(Texture2D), typeof(byte[]) });

@@ -35,6 +35,8 @@ namespace TortalPortal
         public static int Ring => Configuration.AnchorRingSafe;
 
         private static bool _active;
+        private static int _peakObjects;
+        private static bool _reportDue;
         private static Vector3 _position;
 
         // The anchor's own horizon. Vanilla draws far mountains and coastlines with TerrainLod - a 2400m
@@ -57,11 +59,18 @@ namespace TortalPortal
         {
             _position = position;
             _active = true;
+            _peakObjects = 0;
+            _reportDue = false;
             CreateDistantLod(position);
         }
 
         public static void Clear()
         {
+            if (_active && _reportDue)
+            {
+                Plugin.Log.LogInfo($"TortalPortal: anchor at ({_position.x:0},{_position.z:0}) fed ZNetScene a peak of {_peakObjects} object(s) across a {Ring * 2 + 1}x{Ring * 2 + 1} zone block (+{ZoneSystem.instance?.m_activeDistantArea ?? 0} distant ring).");
+                _reportDue = false;
+            }
             _active = false;
             if (_distantLod != null)
             {
@@ -163,7 +172,25 @@ namespace TortalPortal
                     return;
                 }
 
-                ZDOMan.instance.FindSectorObjects(anchorZone, Ring, 0, currentNearObjects);
+                // The third argument is the DISTANT ring, and it used to be 0 - which does not mean
+                // "some distance" but "none": FindSectorObjects loops `area+1 .. area+distantArea`, so
+                // zero never enters the loop and not one distant object is ever asked for. Everything
+                // near the camera arrived correctly and the horizon behind it stayed empty, which is
+                // exactly what a destination that does not look lived-in looks like. Vanilla passes
+                // m_activeDistantArea here for the player's own camera; the anchor gets the same.
+                int before = currentNearObjects.Count;
+                ZDOMan.instance.FindSectorObjects(anchorZone, Ring, ZoneSystem.instance.m_activeDistantArea, currentNearObjects);
+
+                // Peak count reported once per anchor. "Is the far world actually arriving, and how
+                // much of it" has been guessed at from screenshots for several rounds now; a number
+                // settles it, and separates "the anchor is not loading" from "the anchor is loading a
+                // place that is genuinely this empty".
+                int added = currentNearObjects.Count - before;
+                if (added > _peakObjects)
+                {
+                    _peakObjects = added;
+                    _reportDue = true;
+                }
             }
             catch (Exception ex)
             {

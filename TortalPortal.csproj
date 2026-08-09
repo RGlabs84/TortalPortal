@@ -4,7 +4,7 @@
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>TortalPortal</AssemblyName>
     <Description>Total Portal Control System for Valheim</Description>
-    <Version>1.2.0</Version>
+    <Version>1.3.1</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>TortalPortal</RootNamespace>
@@ -28,6 +28,13 @@
     </Reference>
     <Reference Include="assembly_utils">
       <HintPath>..\libs-Tools\assembly_utils.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Valheim's tonemapping, bloom and colour grading are Post Processing Stack v1, held on a
+         PostProcessingBehaviour beside the main camera. The portal camera has to borrow that profile or
+         it renders the raw linear buffer and the photographs come out washed out. -->
+    <Reference Include="assembly_postprocessing">
+      <HintPath>..\libs-Tools\assembly_postprocessing.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <!-- Minimap.AddPin takes an optional PlatformUserID, so calling it needs this on hand. -->
