@@ -526,9 +526,18 @@ namespace TortalPortal
             }
             finally
             {
-                AnchorEnvironment.Detach();
-                SnapshotAnchor.Clear();
-                if (viaServer) SectorSubscription.Release();
+                // Only drop what is still OURS. Normally the anchor standing here is this routine's
+                // own hold and the feed - if one just opened - is still waiting its turn, so clearing
+                // is both safe and the handover itself. But if the feed decided this routine's hold
+                // was stale (its owner never coming back) and anchored OVER it while this iterator
+                // was suspended, the anchor in the ground now belongs to a live view somebody is
+                // watching, and stripping it would break their feed for the rest of the session.
+                if (!LivePreview.HoldsAnchor)
+                {
+                    AnchorEnvironment.Detach();
+                    SnapshotAnchor.Clear();
+                    if (viaServer) SectorSubscription.Release();
+                }
             }
         }
 
@@ -680,6 +689,24 @@ namespace TortalPortal
                 // Also history-driven, and a camera that teleports across the map every time the viewer
                 // flips portals has no history worth keeping - it smears the first frames of every feed.
                 copy.motionBlur.enabled = false;
+
+                // THE SHIMMER. Temporal AA jitters the projection a sub-pixel every render and counts
+                // on reprojecting the previous frame to cancel it back out - and a hand-rendered
+                // camera read back at its own cadence never hands it a history that matches, so the
+                // cancellation fails and the whole feed vibrates finely, forever. A single photograph
+                // never showed it because a single frame IS the jitter, uncancelled and invisible.
+                // FXAA does its entire job inside one frame, which is the only kind of frame this
+                // camera has - so the feed keeps smoothed edges instead of trading shimmer for stairs.
+                UnityEngine.PostProcessing.AntialiasingModel.Settings aa = copy.antialiasing.settings;
+                if (aa.method == UnityEngine.PostProcessing.AntialiasingModel.Method.Taa)
+                {
+                    aa.method = UnityEngine.PostProcessing.AntialiasingModel.Method.Fxaa;
+                    copy.antialiasing.settings = aa;
+                }
+
+                // Animated film grain: designed to be invisible because it moves every frame, which
+                // in a 30fps readback shown beside a rock-steady UI reads as a faint static crawl.
+                copy.dithering.enabled = false;
 
                 dst.profile = copy;
                 _liveProfile = copy;

@@ -233,6 +233,14 @@ tilt only. So **a presence in the zone is the entire feature.**
 - **Ownership:** `UpdateSpawning` runs only for the owner of the zone-control object, which at an
   anchor is the server or nobody. A prefix calling `nview.ClaimOwnership()` covers it — and note
   what that means: the anchoring client becomes the simulator for a place it is not standing in.
+- **The warm-up eats the feature whole.** `SpawnSystem.Awake` starts its clock with
+  `InvokeRepeating("UpdateSpawning", 10f, 1f)` — ten seconds before the FIRST attempt — and the
+  anchored zone's control object is created fresh every time the anchor raises the zone, so that
+  clock restarts on every glance. A view held open under ten seconds (most views) never runs one
+  spawn attempt, however correct the three patches above. Drive the (patched) method directly at
+  ~1s intervals while the view is live: that skips only the warm-up, never the rules — the
+  per-spawner timestamps on the zone ZDO already cap spawns per elapsed second, so extra calls
+  can never spawn faster than vanilla would.
 
 > **This is where a rendering feature becomes a gameplay feature.** The creatures are real, written
 > to the world, and they outlive the view that made them. Ship it **off by default**, and restrict
@@ -266,9 +274,18 @@ at budget exhaustion is fine — the scene finishes loading in front of the view
 
 These patterns are why the anchor can't leak, and they transfer to any use of the technique:
 
-1. **`try/finally` owns the anchor.** The coroutine that raises it drops it in `finally` — and
-   Unity's `StopCoroutine` disposes the iterator, which *runs* the `finally`, so a killed routine
-   cleans up identically to a finished one.
+1. **`try/finally` is the BACKUP, not the teardown.** The coroutine that raises the anchor drops
+   it in `finally` — but that covers only the paths where the iterator genuinely finishes: the
+   deadman firing, the world unloading, a `yield break`. **Unity's `StopCoroutine` does NOT
+   dispose the iterator — it only unschedules it, and a `finally` that was never entered never
+   runs.** An earlier revision of this document claimed the opposite, and TortalPortal shipped a
+   release on that claim; the cost was its flagship bug — every feed stopped explicitly leaked
+   the anchor standing, and every later feed waited on the corpse forever. One live view per
+   visit, silently. The rule that survives: teardown is an ordinary method, **idempotent**,
+   reading statics rather than coroutine locals, called explicitly by whatever stops the routine
+   *and* from the `finally` — whichever fires second finds nothing left to do. And a consumer
+   that finds the single anchor already held should treat a hold that outlives its owner's
+   stand-down window (counted in FRAMES — see below) as a leak to clear, not a queue to wait in.
 2. **Renewals, not open/close.** Anything held across a network (the subscription) expires on its
    own unless re-asked-for. Crash-safety without a cleanup protocol.
 3. **Deadman switches count FRAMES, not seconds.** The anchor's own zone loading hitches the
@@ -336,6 +353,7 @@ subscribe, then deltas. Budget accordingly: the shipped mod holds **one** anchor
 | Somebody is here | `SpawnSystem.GetPlayersInZone` | Harmony **postfix**, add local player only if empty |
 | Where they are | `SpawnSystem.FindBaseSpawnPoint` | Harmony **prefix**, re-run vanilla's loop around the anchor |
 | Zone simulates | `SpawnSystem.UpdateSpawning` | Harmony **prefix**, `nview.ClaimOwnership()` |
+| Zone spawns promptly | `SpawnSystem.UpdateSpawning` | direct call (publicized), ~1s while a view is live — skips the 10s `InvokeRepeating` warm-up |
 | Readiness | `ZNetScene.IsAreaReady` + `Heightmap.HaveQueuedRebuild` + count stability | direct calls |
 | Transport | `ZRoutedRpc.Register<Vector3>` / targetless `InvokeRoutedRPC` | vanilla RPC layer |
 

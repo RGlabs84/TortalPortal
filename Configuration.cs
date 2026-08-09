@@ -47,17 +47,16 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.3.0",
-            // Raised to match, because 1.2.0 is the first release since the rule was written where a mixed
-            // table genuinely plays differently. The far-photo pass and live previews run through a server
-            // RPC ("TortalPortal_AnchorSectors") that older builds never registered: a 1.1.2 client on a
-            // 1.2.0 server gets a silently dead album - photos never refresh, previews never go live, and
-            // nothing errors. Two players comparing albums would describe different mods. That is exactly
-            // the failure the floor exists to turn into a clear version-mismatch message at the handshake.
+            CurrentVersion = "1.3.1",
+            // Raised to 1.3.0 with the 1.3.1 release, by the owner's call. The strict wire test would
+            // have let 1.2.x stay (no new RPCs since), but 1.3.0 is where the shared artwork landed -
+            // the shipped icon set, the server-streamed icon catalogue - and a mixed 1.2.x table reads
+            // different maps for the same world: markers one player sees and another cannot. The floor
+            // turns that into a clear version-mismatch message at the handshake instead.
             //
             // Raising this is a BREAKING change for anyone still on an older build: they are turned away at
             // the handshake rather than let in to desync. Every client has to update alongside the server.
-            MinimumRequiredVersion = "1.2.0"
+            MinimumRequiredVersion = "1.3.0"
         };
 
         // Where the migration stamp lives. Named here so ConfigMigration can find it in a raw file that
@@ -190,18 +189,20 @@ namespace TortalPortal
             remoteSnapshots = config.Bind("3 - Features", "EnableRemoteSnapshots", true,
                 "Quietly load the world around ONE never-photographed portal at a time - out where nobody is standing - photograph it and unload it again, so portals nobody visits still get their picture. On a hosted world the hosting player's game does this from its own memory; on a dedicated server (which draws nothing itself) each player's game asks the server for the far portal's surroundings, photographs it and hands the picture back. Costs whoever is doing it a few seconds of background zone loading per portal. Off returns to photographs only being taken where somebody actually walks.");
             // EXPERIMENTAL, and off. The stored photograph is the shipped feature and it is finished;
-            // this is the same machinery driven continuously, and continuously is where it still has
-            // rough edges - a faint shimmer, a warm-up that can run long on a big destination. It is
-            // left in, working, for anyone who wants it, rather than held back until perfect.
+            // this is the same machinery driven continuously. 1.3.1 fixed the two failures that
+            // earned the label - the one-view-per-visit teardown leak and the temporal-AA shimmer -
+            // so what keeps it experimental now is cost and the warm-up, not correctness.
             livePreviews = config.Bind("3 - Features", "EnableLivePreviews", false,
-                "EXPERIMENTAL, off by default. Open a portal's picture full-size and, instead of the stored photograph, watch the destination LIVE - real weather, real time of day, rendered by your own game through the same anchor the background camera uses. It works, and it is genuinely the best way to see where a gate goes; it is off because it is not finished. Known rough edges: a faint shimmer in the image, and a warm-up of several seconds on a large or distant destination before the feed opens. Understand what it actually does before turning it on: this is not a video, it is your game BUILDING somewhere else and holding it standing while you watch - terrain, trees, buildings and creatures all really there, sized by AnchorZoneRing, and on a dedicated server all of it crosses the wire to you first. It is by far the most expensive thing this mod does. If your framerate suffers, turn AnchorZoneRing down before turning this off. Server-synced: the server's setting is final for everyone.");
+                "EXPERIMENTAL, off by default. Open a portal's picture full-size and, instead of the stored photograph, watch the destination LIVE - real weather, real time of day, rendered by your own game through the same anchor the background camera uses. It works, and it is genuinely the best way to see where a gate goes. Known rough edge: a warm-up of several seconds on a large or distant destination before the feed opens. Understand what it actually does before turning it on: this is not a video, it is your game BUILDING somewhere else and holding it standing while you watch - terrain, trees, buildings and creatures all really there, sized by AnchorZoneRing, and on a dedicated server all of it crosses the wire to you first. It is by far the most expensive thing this mod does. If your framerate suffers, turn AnchorZoneRing down before turning this off. Server-synced: the server's setting is final for everyone.");
             anchoredEnvironment = config.Bind("3 - Features", "AnchoredEnvironment", true,
                 "Give a far-off portal its OWN sky. Valheim keeps one sky, one sun, one set of weather and one field of grass, all welded to wherever you are standing - so without this a camera in the Ashlands photographs real Ashlands ground under YOUR weather: no ash rain, no ashen sky, no grass. On, the anchored camera gets the destination's own fog, sun, ambient light, weather particles and grass for the fraction of a second it is drawing, and your own view is put back untouched. Costs a copy of the weather effects and a patch of grass at the far end, both of which clean themselves up. Off returns to photographs and feeds wearing your local weather.");
-            // OFF by default, and unlike every other dial in this section that is not timidity: this is
-            // the one setting here that changes the WORLD rather than a picture of it. An admin opting
-            // in should be a decision, not a thing they inherit from an update.
-            anchoredSpawning = config.Bind("3 - Features", "AnchoredSpawning", false,
-                "Let wildlife appear at a portal's destination while somebody is looking at it. Valheim only makes creatures where a player is standing, which is why a far-off gate can be fully loaded, correctly lit, weather and all, and still look like nowhere anybody lives. On, the anchored camera counts as a presence and the destination's own spawners run normally. READ THIS BEFORE ENABLING: the creatures are REAL. They are written into the world, they are simulated by whoever is watching, and they remain after the view closes - so browsing an album of eight gates can seed eight neighbourhoods with monsters that another player later walks into. It also makes the watching client responsible for simulating a place it is not standing in. Off, destinations show the world and whatever already lives there, and looking at a gate changes nothing. Only a LIVE view does this, never the background photographer - an unattended camera walking the world stocking it with monsters is not a thing anybody asked for.");
+            // ON by default from 1.3.1, reversing the 1.3.0 call. Shipped off, the flagship view - a
+            // LIVE window onto somewhere else - opened onto a world standing perfectly still, which
+            // read as broken rather than cautious; a destination is supposed to look inhabited. The
+            // description still says plainly what it costs, and off remains one click away for an
+            // admin who wants glances to change nothing.
+            anchoredSpawning = config.Bind("3 - Features", "AnchoredSpawning", true,
+                "Let wildlife appear at a portal's destination while somebody is looking at it. Valheim only makes creatures where a player is standing, which is why a far-off gate can be fully loaded, correctly lit, weather and all, and still look like nowhere anybody lives. On, the anchored camera counts as a presence and the destination's own spawners run normally - and promptly, without vanilla's ten-second spawner warm-up. UNDERSTAND WHAT IT DOES: the creatures are REAL. They are written into the world, they are simulated by whoever is watching, and they remain after the view closes - so browsing an album of eight gates can seed eight neighbourhoods with monsters that another player later walks into. It also makes the watching client responsible for simulating a place it is not standing in. Off, destinations show the world and whatever already lives there, and looking at a gate changes nothing. Only a LIVE view does this, never the background photographer - an unattended camera walking the world stocking it with monsters is not a thing anybody asked for.");
             // 1080p by default from 1.3.1. It costs real bandwidth - see the description - but a
             // photograph you open FULL SCREEN at 720p is visibly soft, which is the whole point of it.
             cameraResolution = config.Bind("3 - Features", "CameraResolution", CameraResolution.Res1080p,

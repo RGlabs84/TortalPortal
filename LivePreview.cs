@@ -30,6 +30,14 @@ namespace TortalPortal
         // closed album keeps rendering frames without ticking, and three of them (~50ms) end the feed.
         private const int DeadmanFrames = 3;
 
+        // How many consecutive laps a starting feed will wait for somebody else's anchor before
+        // deciding it is waiting on a corpse. Laps, not wall-clock, for the same reason the deadman
+        // counts frames: a zone-loading hitch stalls every coroutine equally, and a wall-clock
+        // limit would read its own hitch as a leak. The background walk stands down within a
+        // quarter-second of a feed opening, so a hold that survives six hundred rendered frames is
+        // not the walk being slow - it is an anchor nobody is coming back for.
+        private const int StaleAnchorLaps = 600;
+
         private static Phase _phase = Phase.Idle;
         private static ZDOID _id = ZDOID.None;
         private static Vector3 _pos;
@@ -39,6 +47,15 @@ namespace TortalPortal
         private static Coroutine _routine;
         private static Camera _cam;
         private static RenderTexture _rt;
+
+        // Statics rather than locals in Run(), because the teardown can no longer live only in
+        // Run()'s finally: Unity's StopCoroutine unschedules the iterator WITHOUT disposing it, so
+        // a finally under the yields simply never runs when a feed is stopped from outside. (The
+        // 1.3.0 code believed the opposite, and the cost was the one-shot album: the first stopped
+        // feed leaked the anchor, and every later feed waited on it forever.) TearDown() reads
+        // these directly so it can be called from anywhere and still know what it is holding.
+        private static bool _anchored;
+        private static bool _viaServer;
 
         // The feed is now the STILL camera run repeatedly, rather than a second kind of camera that
         // happens to point at the same place. That was the whole trouble: an enabled camera drawing
@@ -67,6 +84,13 @@ namespace TortalPortal
         // The background walk checks this: while somebody is watching, the walk waits its turn for the
         // single anchor rather than fighting over it.
         public static bool Active => _phase != Phase.Idle;
+
+        // True only while the feed is actually STANDING on the anchor, as opposed to merely wanting
+        // it. The walk's own teardown checks this before dropping the anchor: normally the walk
+        // clears its hold while the feed is still waiting (HoldsAnchor false - the handover), but if
+        // the feed force-cleared a stale hold and anchored itself while the walk's iterator was
+        // suspended, the anchor in the ground is no longer the walk's to drop.
+        public static bool HoldsAnchor => _anchored;
 
         // Called by the album every frame it draws a portal full-size. First call starts the feed, a
         // different portal restarts it, silence stops it. Idempotent within a frame - IMGUI calls its
@@ -162,8 +186,13 @@ namespace TortalPortal
         {
             try
             {
-                // StopCoroutine disposes the iterator, which runs its finally - the teardown lives there,
-                // so a stopped feed cleans up exactly like a naturally-ending one.
+                // StopCoroutine does NOT dispose the iterator - it only unschedules it, and a finally
+                // that has not been entered never runs. 1.3.0 believed otherwise and put the whole
+                // teardown in Run()'s finally; every feed stopped from here (paging with the arrows,
+                // clicking another row, the window closing) leaked the anchor standing, and every
+                // feed after it waited politely on that corpse forever - the one-live-view-per-visit
+                // bug. The teardown is called explicitly below instead. It is idempotent, so the
+                // paths where the finally genuinely runs (deadman, world unload) stay correct.
                 if (_routine != null && Plugin.Instance != null) Plugin.Instance.StopCoroutine(_routine);
             }
             catch (Exception ex)
@@ -171,15 +200,15 @@ namespace TortalPortal
                 Plugin.Log.LogError($"TortalPortal: stopping the live preview failed (non-fatal). Reason: {ex}");
             }
             _routine = null;
-            _phase = Phase.Idle;
-            _id = ZDOID.None;
+            TearDown();
         }
 
         private static IEnumerator Run()
         {
-            bool viaServer = ZNet.instance != null && !ZNet.instance.IsServer();
-            bool anchored = false;
+            _viaServer = ZNet.instance != null && !ZNet.instance.IsServer();
+            _anchored = false;
             int cameraAttempts = 0;
+            int anchorWaitLaps = 0;
             float nextRenew = 0f;
 
             try
@@ -191,7 +220,7 @@ namespace TortalPortal
                     if (ZNetScene.instance == null || ZoneSystem.instance == null || Player.m_localPlayer == null) yield break;
                     if (!Configuration.remoteSnapshots.Value || !Configuration.livePreviews.Value) yield break;
 
-                    if (!anchored)
+                    if (!_anchored)
                     {
                         // The background walk may hold the single anchor mid-shot; wait it out. Since
                         // 1.3.4 the walk also stands DOWN the moment a feed opens, so this is a
@@ -201,6 +230,19 @@ namespace TortalPortal
                         // wondering whether the thing was broken.
                         if (SnapshotAnchor.IsActive)
                         {
+                            // ...but never wait on it forever. Anything legitimate stands down within
+                            // a quarter-second of Active going true; a hold that outlives hundreds of
+                            // rendered frames is an anchor whose owner died without cleaning up, and
+                            // waiting politely on a leak was exactly the one-shot bug. Clear it, say
+                            // so, and take the anchor on the next lap.
+                            if (++anchorWaitLaps > StaleAnchorLaps)
+                            {
+                                anchorWaitLaps = 0;
+                                Plugin.Log.LogWarning($"TortalPortal: the anchor was still held after {StaleAnchorLaps} frames with a live feed waiting - clearing what can only be a leaked hold.");
+                                AnchorEnvironment.Detach();
+                                AnchorPresence.Clear();
+                                SnapshotAnchor.Clear();
+                            }
                             yield return null;
                             continue;
                         }
@@ -209,8 +251,8 @@ namespace TortalPortal
                         // fill, or the feed goes live on ash that has only just started falling.
                         AnchorEnvironment.Attach(_pos);
                         AnchorPresence.Set(_pos);
-                        anchored = true;
-                        if (viaServer)
+                        _anchored = true;
+                        if (_viaServer)
                         {
                             SectorSubscription.Renew(_pos);
                             nextRenew = Time.realtimeSinceStartup + SectorSubscription.RenewSeconds;
@@ -224,13 +266,18 @@ namespace TortalPortal
                     // The walk now stands aside for a live feed, so this should not fire; it is here
                     // because the cost of being wrong is a whole session watching gates under the
                     // player's own weather, with nothing in the log to say why.
-                    if (anchored && Configuration.anchoredEnvironment.Value && !AnchorEnvironment.IsActive)
+                    if (_anchored && Configuration.anchoredEnvironment.Value && !AnchorEnvironment.IsActive)
                     {
                         AnchorEnvironment.Attach(_pos);
                         if (_cam != null) AnchorEnvironment.Bind(_cam);
                     }
                     AnchorEnvironment.Tick();
-                    if (viaServer && Time.realtimeSinceStartup >= nextRenew)
+                    // Wildlife, only while somebody is genuinely watching. Vanilla's spawners at the
+                    // anchor exist but sit out a ten-second InvokeRepeating warm-up that restarts every
+                    // time the anchor re-raises the zone - which for most glances is "never runs".
+                    // The pump drives them through the ordinary (patched) path on vanilla's own cadence.
+                    if (_phase == Phase.Live) AnchorPresence.PumpSpawning();
+                    if (_viaServer && Time.realtimeSinceStartup >= nextRenew)
                     {
                         SectorSubscription.Renew(_pos);
                         nextRenew = Time.realtimeSinceStartup + SectorSubscription.RenewSeconds;
@@ -295,7 +342,10 @@ namespace TortalPortal
             }
             finally
             {
-                TearDown(anchored, viaServer);
+                // This finally runs only when the iterator genuinely finishes or is disposed - the
+                // deadman, a world unload, a config flip. A feed ended by Stop() never gets here
+                // (StopCoroutine does not dispose), which is why Stop() calls TearDown() itself.
+                TearDown();
             }
         }
 
@@ -360,6 +410,12 @@ namespace TortalPortal
                 Camera cam = go.AddComponent<Camera>();
                 Camera gameCam = Camera.main;
                 if (gameCam != null) cam.CopyFrom(gameCam);
+                // CopyFrom copies EVERYTHING, including an explicit projection-matrix override if the
+                // main camera happens to be carrying one - and while the player runs temporal AA it
+                // always is, jittered a sub-pixel off-centre for whichever frame the copy caught. A
+                // latched override also stops fieldOfView meaning anything, which is the zoom wheel.
+                // Back to a matrix derived from fov and aspect, like a camera built from nothing.
+                cam.ResetProjectionMatrix();
 
                 // The same borrowed tonemapper the stored photograph is shot through. Without it the feed
                 // went live and visibly washed out against the still it replaced - the exact moment a
@@ -407,7 +463,11 @@ namespace TortalPortal
             }
         }
 
-        private static void TearDown(bool anchored, bool viaServer)
+        // Idempotent on purpose, and reading statics rather than taking arguments: it is called from
+        // Stop() (which StopCoroutine-kills the iterator WITHOUT running its finally) and from Run()'s
+        // finally (the naturally-ending paths), and on the rare occasion both fire the second call
+        // finds everything already null and cleared and does nothing.
+        private static void TearDown()
         {
             try
             {
@@ -422,22 +482,28 @@ namespace TortalPortal
                 if (_rt != null) { UnityEngine.Object.Destroy(_rt); _rt = null; }
                 if (_tex != null) { UnityEngine.Object.Destroy(_tex); _tex = null; }
                 PlacementPatch.ReleaseLiveProfile();
-                if (anchored)
+                if (_anchored)
                 {
                     AnchorEnvironment.Detach();
                     AnchorPresence.Clear();
                     SnapshotAnchor.Clear();
-                    if (viaServer) SectorSubscription.Release();
+                    if (_viaServer) SectorSubscription.Release();
                 }
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogError($"TortalPortal: live preview teardown hit an error (the anchor is still dropped). Reason: {ex}");
-                // Whatever happened above, neither the anchor nor the borrowed sky may survive this.
-                try { AnchorEnvironment.Detach(); } catch { }
-                try { AnchorPresence.Clear(); } catch { }
-                try { SnapshotAnchor.Clear(); } catch { }
+                // Whatever happened above, neither the anchor nor the borrowed sky may survive this -
+                // but only if the anchor was OURS to drop. When the feed died still waiting its turn,
+                // the anchor standing belongs to the background walk mid-shot.
+                if (_anchored)
+                {
+                    try { AnchorEnvironment.Detach(); } catch { }
+                    try { AnchorPresence.Clear(); } catch { }
+                    try { SnapshotAnchor.Clear(); } catch { }
+                }
             }
+            _anchored = false;
             _phase = Phase.Idle;
             _id = ZDOID.None;
             _routine = null;

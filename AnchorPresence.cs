@@ -39,6 +39,12 @@ namespace TortalPortal
         private static bool _active;
         private static Vector3 _pos;
 
+        // The pump's own cadence and stand-down latch - see PumpSpawning below.
+        private const float PumpSeconds = 1f;
+        private static float _nextPump;
+        private static bool _pumpFailed;
+        private static bool _pumpAnnounced;
+
         public static bool IsActive => _active;
         public static Vector3 Position => _pos;
 
@@ -46,11 +52,62 @@ namespace TortalPortal
         {
             _pos = anchorPos;
             _active = true;
+            _nextPump = 0f;
+            _pumpFailed = false;
+            _pumpAnnounced = false;
         }
 
         public static void Clear()
         {
             _active = false;
+        }
+
+        // The gates above make spawning at the anchor LEGAL; this makes it PROMPT. A zone's spawner
+        // drives itself with InvokeRepeating("UpdateSpawning", 10f, 1f) - ten seconds of warm-up
+        // before the first attempt - and the anchored zone's control object is created fresh every
+        // time the anchor raises the zone, so that clock restarts on every glance. A viewer holding
+        // a feed open for less than ten seconds (which is most viewers) never saw a single spawn
+        // attempt, however correctly the three patches above answered.
+        //
+        // Called by the live feed each lap while the feed is actually LIVE. Driving the (patched)
+        // method directly skips only the warm-up, never the rules: every spawn still runs vanilla's
+        // full gauntlet, and the per-spawner timestamps on the zone ZDO already gate how much can
+        // spawn per elapsed second - extra calls can never spawn faster than vanilla would.
+        public static void PumpSpawning()
+        {
+            if (_pumpFailed) return;
+            try
+            {
+                if (!_active || !Configuration.anchoredSpawning.Value) return;
+                if (ZoneSystem.instance == null || Player.m_localPlayer == null) return;
+                if (Time.realtimeSinceStartup < _nextPump) return;
+                _nextPump = Time.realtimeSinceStartup + PumpSeconds;
+
+                int driven = 0;
+                foreach (SpawnSystem system in SpawnSystem.m_instances)
+                {
+                    // Applies() is the same gate the patches use, so the pump can only ever drive
+                    // the anchor's own ring - every other spawner in the world keeps vanilla's clock.
+                    if (system == null || !Applies(system)) continue;
+                    system.UpdateSpawning();
+                    driven++;
+                }
+
+                // Once per anchor, at Info, same reasoning as everywhere else in the anchor: this is
+                // invisible work far from any player, and silence reads as "never ran".
+                if (driven > 0 && !_pumpAnnounced)
+                {
+                    _pumpAnnounced = true;
+                    Plugin.Log.LogInfo($"TortalPortal: anchored spawning is driving {driven} zone spawner(s) at ({_pos.x:0},{_pos.z:0}).");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Once is enough - this is called every lap of a live feed. Wildlife falls back to
+                // vanilla's own ten-second clock, which still works; it is merely slow.
+                _pumpFailed = true;
+                Plugin.Log.LogError($"TortalPortal: driving the anchored zone's spawners failed (non-fatal, wildlife waits for vanilla's own timer). Reason: {ex}");
+            }
         }
 
         // Does this spawner belong to the anchor rather than to the player's own surroundings? Checked
