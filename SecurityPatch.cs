@@ -14,6 +14,7 @@ namespace TortalPortal
             {
                 if (hold)
                 {
+                    if (SkippedPortals.IsSkipped(__instance)) return true;
                     __result = false;
                     return false;
                 }
@@ -22,6 +23,30 @@ namespace TortalPortal
 
                 var nview = __instance.GetComponent<ZNetView>();
                 if (nview == null || !nview.IsValid()) return true;
+
+                // A gate on SkipPortalPrefabs is not ours: vanilla (and the mod that owns it) handles E, hold
+                // included, so this check sits before anything else of ours decides.
+                if (SkippedPortals.IsSkipped(nview.GetZDO())) return true;
+
+                // A corpse gate is not anyone's to configure. E at the bed side sends the owner through - the
+                // manual trigger for a player who stepped back from the approach and returned - and does
+                // nothing for anybody else or at the grave side.
+                if (CorpseRun.IsCorpseGate(nview.GetZDO()))
+                {
+                    __result = CorpseRun.TravelToGrave(__instance);
+                    return false;
+                }
+
+                // A concealed gate this client has never been handed. E on it IS the discovery: the claim goes
+                // to the server, which checks that the player is genuinely standing here before it records
+                // anything, and the destination window opens on the gate when the reveal comes back. Once found
+                // it falls through to everything below and behaves like any other portal - which, for a gate
+                // recording no builder, means only an admin can rename or lock it.
+                if (ConcealedPortals.IsUndiscoveredHere(nview.GetZDO()))
+                {
+                    __result = ConcealedPortals.Claim(__instance, nview.GetZDO());
+                    return false;
+                }
 
                 if (CanConfigure(__instance))
                 {
@@ -74,6 +99,9 @@ namespace TortalPortal
         {
             try
             {
+                // A skipped gate keeps vanilla's tag: whatever pairs it (vanilla or its own mod) reads the tag.
+                if (SkippedPortals.IsSkipped(__instance)) return true;
+
                 var nview = __instance.GetComponent<ZNetView>();
                 if (nview != null && nview.IsValid() && nview.IsOwner())
                 {

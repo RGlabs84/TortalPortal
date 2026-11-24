@@ -28,8 +28,10 @@ new file to the package is then a deliberate edit to this script, and forgetting
 
 import hashlib
 import json
+import os
 import pathlib
 import re
+import subprocess
 import sys
 import zipfile
 
@@ -43,6 +45,7 @@ REQUIRED = [
     "LICENSE.md",
     "icon.png",
     "plugins/TortalPortal.dll",
+    "plugins/TortalPortal.pdb",   # owner rule 2026-11-20: the matching PDB ships with every package
 ]
 
 # Map-pin icons: packaged as a set rather than named individually, but the COUNT is asserted, so a
@@ -68,6 +71,21 @@ def main() -> int:
 
     print("=== Hex Fold: TortalPortal ===")
 
+    # ---- 0. forge the store README from README.src.md (README schema v3.1) ---------------------
+    libs = pathlib.Path(os.environ.get("LIBS_TOOLS", repo.parent / "libs-Tools"))
+    forge = libs / "readme-forge" / "forge_readme.py"
+    if not forge.is_file():
+        return fail(f"README forge not found at {forge}")
+    cmd = [sys.executable, "-I", str(forge), str(repo / "README.src.md"), str(dist / "README.md"),
+           "--manifest", str(dist / "manifest.json"), "--code-root", str(repo)]
+    if "--check-badges" in sys.argv:
+        cmd.append("--check-badges")
+    print("[0/5] Forging README.md from README.src.md...")
+    if subprocess.run(cmd).returncode != 0:
+        return fail("the README did not forge - fix README.src.md (never edit HexiumDist/README.md)")
+    if not (dist / "README.md").read_text(encoding="utf-8").startswith("<!-- README schema v3 -->"):
+        return fail("README.md line 1 is not the schema v3 marker")
+
     manifest_path = dist / "manifest.json"
     if not manifest_path.is_file():
         return fail(f"missing manifest at {manifest_path}")
@@ -92,7 +110,7 @@ def main() -> int:
         (repo / "Plugin.cs", r'PluginVersion = "([^"]+)"', "Plugin.cs PluginVersion"),
         (repo / "TortalPortal.csproj", r"<Version>([^<]+)</Version>", "csproj Version"),
         (repo / "Configuration.cs", r'CurrentVersion = "([^"]+)"', "Configuration.cs ConfigSync CurrentVersion"),
-        (dist / "README.md", r"Version-([0-9.]+)-lightgrey", "README.md version badge"),
+        (dist / "README.md", r"badge/VERSION-([0-9.]+)-", "README.md VERSION badge"),
     ]
     for path, pattern, label in checks:
         bad = site(path, pattern, label)
@@ -117,6 +135,17 @@ def main() -> int:
     # A version-stamped assembly that does not contain the version string is a stale DLL.
     if version.encode() not in dll_bytes and version.encode("utf-16-le") not in dll_bytes:
         return fail(f"the built DLL does not embed version {version} - it is stale, rebuild it")
+
+    # The PDB must be the one built with THIS DLL, and must not leak the builder's home folder.
+    built_pdb = built_dll.with_suffix(".pdb")
+    staged_pdb = staged_dll.with_suffix(".pdb")
+    if not built_pdb.is_file():
+        return fail(f"built PDB not found at {built_pdb}")
+    if not staged_pdb.is_file() or staged_pdb.read_bytes() != built_pdb.read_bytes():
+        staged_pdb.write_bytes(built_pdb.read_bytes())
+    pdb_check = libs / "pdb_match.py"
+    if subprocess.run([sys.executable, "-I", str(pdb_check), str(staged_dll)]).returncode != 0:
+        return fail("pdb_match.py: the PDB does not match the DLL, or it records a home path")
     print(f"      DLL SHA256: {dll_sha}")
     print(f"      DLL embeds v{version}: yes ({len(dll_bytes):,} bytes)")
 
@@ -179,6 +208,8 @@ def main() -> int:
         packed_sha = hashlib.sha256(zf.read("plugins/TortalPortal.dll")).hexdigest()
         if packed_sha != dll_sha:
             return fail(f"packed DLL SHA256 {packed_sha} != built {dll_sha}")
+        if zf.read("plugins/TortalPortal.pdb") != built_pdb.read_bytes():
+            return fail("packed PDB differs from the built one")
         if json.loads(zf.read("manifest.json")).get("version_number") != version:
             return fail("the packed manifest does not carry the version we folded")
     print(f"      Verified {len(names)} entries, {zip_path.stat().st_size:,} bytes.")

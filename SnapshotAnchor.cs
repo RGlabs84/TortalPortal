@@ -50,6 +50,10 @@ namespace TortalPortal
 
         public static bool IsActive => _active;
 
+        // Where the anchor is standing. Exposed for anything that needs to reason about the block this
+        // anchor is holding up rather than about the player's own surroundings.
+        public static Vector3 Position => _position;
+
         // True once the anchor's horizon meshes have built (they bake on the HeightmapBuilder's worker
         // thread), or when there is no rig at all - absence degrades to the old void horizon, not a stall.
         public static bool DistantTerrainReady =>
@@ -68,7 +72,7 @@ namespace TortalPortal
         {
             if (_active && _reportDue)
             {
-                Plugin.Log.LogInfo($"TortalPortal: anchor at ({_position.x:0},{_position.z:0}) fed ZNetScene a peak of {_peakObjects} object(s) across a {Ring * 2 + 1}x{Ring * 2 + 1} zone block (+{ZoneSystem.instance?.m_activeDistantArea ?? 0} distant ring).");
+                Plugin.Log.LogInfo($"TortalPortal: anchor at ({_position.x:0},{_position.z:0}) fed ZNetScene a peak of {_peakObjects} object(s) across a {Ring * 2 + 1}x{Ring * 2 + 1} zone block (+{ZoneCompat.ActiveDistantArea} distant ring).");
                 _reportDue = false;
             }
             _active = false;
@@ -136,12 +140,12 @@ namespace TortalPortal
             try
             {
                 int ring = Ring;
-                Vector2i center = ZoneSystem.GetZone(_position);
+                Vector2s center = ZoneSystem.GetZone(_position);
                 for (int y = center.y - ring; y <= center.y + ring; y++)
                 {
                     for (int x = center.x - ring; x <= center.x + ring; x++)
                     {
-                        if (ZoneSystem.instance.PokeLocalZone(new Vector2i(x, y))) return;
+                        if (ZoneSystem.instance.PokeLocalZone(new Vector2s(x, y))) return;
                     }
                 }
             }
@@ -163,9 +167,11 @@ namespace TortalPortal
 
                 // When the anchor sits close enough to the player that the sector lists could overlap,
                 // vanilla is already loading it - appending would put the same ZDOs in the list twice.
-                Vector2i anchorZone = ZoneSystem.GetZone(_position);
-                Vector2i refZone = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
-                int overlap = ZoneSystem.instance.m_activeArea + Ring;
+                Vector2s anchorZone = ZoneSystem.GetZone(_position);
+                Vector2s refZone = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
+                // On 1.0 the near ring is the live synced simulation distance (default 2, player-raisable)
+                // where pre-1.0 it was the fixed m_activeArea, so this back-off grows with that setting.
+                int overlap = ZoneCompat.ActiveArea + Ring;
                 if (Mathf.Abs(anchorZone.x - refZone.x) <= overlap &&
                     Mathf.Abs(anchorZone.y - refZone.y) <= overlap)
                 {
@@ -173,13 +179,17 @@ namespace TortalPortal
                 }
 
                 // The third argument is the DISTANT ring, and it used to be 0 - which does not mean
-                // "some distance" but "none": FindSectorObjects loops `area+1 .. area+distantArea`, so
-                // zero never enters the loop and not one distant object is ever asked for. Everything
-                // near the camera arrived correctly and the horizon behind it stayed empty, which is
-                // exactly what a destination that does not look lived-in looks like. Vanilla passes
-                // m_activeDistantArea here for the player's own camera; the anchor gets the same.
+                // "some distance" but "none": with the classic SimulationDistance ZoneCompat passes,
+                // FindSectorObjects sweeps the near rings `1 .. near` and then the distant rings
+                // `near+1 .. near+far`, so zero never enters that second loop and not one distant object
+                // is ever asked for. Everything near the camera arrived correctly and the horizon behind
+                // it stayed empty, which is exactly what a destination that does not look lived-in looks
+                // like. Vanilla sweeps its far simulation distance here for the player's own camera; the
+                // anchor gets the same live value. (A non-classic SimulationDistance loops `1 .. near+far`
+                // for the distant list and trims every ring to a disc through ZonesWithinRadius - a
+                // rounder, different sweep. Classic keeps the square block the ring dial describes.)
                 int before = currentNearObjects.Count;
-                ZDOMan.instance.FindSectorObjects(anchorZone, Ring, ZoneSystem.instance.m_activeDistantArea, currentNearObjects);
+                ZoneCompat.FindSector(anchorZone, Ring, ZoneCompat.ActiveDistantArea, currentNearObjects);
 
                 // Peak count reported once per anchor. "Is the far world actually arriving, and how
                 // much of it" has been guessed at from screenshots for several rounds now; a number

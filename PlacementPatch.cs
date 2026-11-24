@@ -7,7 +7,6 @@ using System.Collections.Generic;
 namespace TortalPortal
 {
     [HarmonyPatch]
-    [HarmonyPatch]
     public static class PlacementPatch
     {
         // The other end of ZNet_Start_Postfix. Leaving a world has to shut our windows explicitly: the UI
@@ -21,6 +20,15 @@ namespace TortalPortal
             try
             {
                 PortalUIManager.HideUI();
+
+                // Both hold state belonging to the server just left - a name register and a running export
+                // routine. Carrying either into the next world would have one world answering for another.
+                PlayerNames.Reset();
+                PortalExport.Reset();
+                PortalMapPins.Reset();
+                CorpseRun.Reset();
+                ConcealedPortals.Reset();
+                PortalHealth.Reset();
             }
             catch (Exception ex)
             {
@@ -40,6 +48,12 @@ namespace TortalPortal
                 SectorSubscription.OnZNetStart();
                 ScatterCommand.OnZNetStart();
                 TortalPinLibrary.OnZNetStart();
+                PlayerNames.OnZNetStart();
+                PortalExport.OnZNetStart();
+                PortalMapPins.OnZNetStart();
+                CorpseRun.OnZNetStart();
+                ConcealedPortals.OnZNetStart();
+                PortalHealth.OnZNetStart();
                 InitializeBackgroundSnapshot();
             }
             catch (Exception ex)
@@ -68,48 +82,88 @@ namespace TortalPortal
             }
         }
 
-        [HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
+        // The cap has to be refused on TryPlacePiece, never on PlacePiece. PlacePiece returns void - it is
+        // only the instantiate step - and what the player actually pays against is TryPlacePiece's bool:
+        //
+        //     if (TryPlacePiece(selectedPiece)) { ConsumeResources(...); UseStamina(...); RaiseSkill(...); }
+        //
+        // Refusing PlacePiece skipped the portal and left that whole tail running, so a capped player was
+        // charged the wood and the surtling cores for a portal that was never built. Saying no here, with
+        // __result false, is the only refusal vanilla reads as "nothing happened".
+        [HarmonyPatch(typeof(Player), nameof(Player.TryPlacePiece))]
         [HarmonyPrefix]
-        public static bool Player_PlacePiece_Prefix(Player __instance, Piece piece, out bool __state)
+        public static bool Player_TryPlacePiece_Prefix(Player __instance, Piece piece, ref bool __result)
         {
-            __state = false;
             try
             {
                 if (piece == null || piece.GetComponent<TeleportWorld>() == null) return true;
+                // Not ours, so not under our cap (and not counted towards it either - see GetAllPortals).
+                if (SkippedPortals.IsSkippedName(piece.name)) return true;
 
                 int maxPortals = Configuration.maxPortalsPerPlayer.Value;
-                if (maxPortals > 0 && !Configuration.IsAdmin())
-                {
-                    long playerID = Game.instance.GetPlayerProfile().GetPlayerID();
-                    int currentPortals = CountPlayerPortals(playerID);
+                if (maxPortals <= 0 || Configuration.IsAdmin()) return true;
 
-                    if (currentPortals >= maxPortals)
-                    {
-                        __instance.Message(MessageHud.MessageType.Center, $"Maximum portals reached ({maxPortals}).");
-                        return false;
-                    }
-                }
+                long playerID = Game.instance.GetPlayerProfile().GetPlayerID();
+                int owned = CountPlayerPortals(playerID);
+                if (owned < maxPortals) return true;
 
-                __state = true;
-                return true;
+                __instance.Message(MessageHud.MessageType.Center, $"Maximum portals reached ({maxPortals}).");
+                __result = false;
+                LogRefusal(playerID, maxPortals, owned);
+                return false;
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogError($"TortalPortal: {nameof(Player_PlacePiece_Prefix)} failed, falling back to vanilla placement. Reason: {ex}");
+                Plugin.Log.LogError($"TortalPortal: {nameof(Player_TryPlacePiece_Prefix)} failed, falling back to vanilla placement. Reason: {ex}");
                 return true;
             }
         }
 
-        [HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
-        [HarmonyPostfix]
-        public static void Player_PlacePiece_Postfix(Player __instance, Piece piece, Vector3 pos, Quaternion rot, bool __state)
+        // Refusals are logged, at Info, and the line is worth every character of it. A refusal looks
+        // identical from outside whether the number came from the server or the client invented it, and
+        // whether the player is an admin whose bypass failed or simply is not an admin - and that ambiguity
+        // is exactly what made "admins are being capped" take a release to pin down. So the line says all
+        // three: what was counted, what the limit was, and what each authority thinks of the player.
+        //
+        // Keyed on the verdict rather than rate-limited by time, so a player leaning on the mouse button
+        // writes one line, not one per click, while a cap that CHANGES underneath them still gets recorded.
+        private static long _lastRefusalKey = long.MinValue;
+
+        private static void LogRefusal(long playerID, int cap, int owned)
         {
             try
             {
-                if (!__state || piece == null) return;
-                
+                long key = ((long)cap << 32) ^ (uint)owned;
+                if (key == _lastRefusalKey) return;
+                _lastRefusalKey = key;
+
+                Plugin.Log.LogInfo(
+                    $"TortalPortal: refused a portal - player {playerID} owns {owned} of a maximum {cap}. " +
+                    $"AdminBypass={(Configuration.adminBypass != null && Configuration.adminBypass.Value)}, " +
+                    $"ServerSync says admin={Configuration.configSync.IsAdmin}, " +
+                    $"the game's own admin list says admin={Configuration.LocalPlayerIsServerAdmin()}. " +
+                    "If that limit is not the number set on the SERVER, this client is enforcing one of its " +
+                    "own - check LockConfiguration.");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"TortalPortal: could not log a portal-cap refusal (non-fatal). Reason: {ex.Message}");
+            }
+        }
+
+        // Reached only when the portal really was instantiated: TryPlacePiece is vanilla's sole caller and it
+        // gets here only once every placement check has passed, ours included, so the photograph needs no
+        // separate "was it allowed" flag carried down from a prefix.
+        [HarmonyPatch(typeof(Player), nameof(Player.PlacePiece))]
+        [HarmonyPostfix]
+        public static void Player_PlacePiece_Postfix(Piece piece, Vector3 pos)
+        {
+            try
+            {
+                if (piece == null) return;
+
                 TeleportWorld twPrefab = piece.GetComponent<TeleportWorld>();
-                if (twPrefab != null && Configuration.enablePortalCameraShot.Value)
+                if (twPrefab != null && Configuration.enablePortalCameraShot.Value && !SkippedPortals.IsSkippedName(piece.name))
                 {
                     // Delay screenshot slightly to ensure piece is fully initialized in the world
                     Plugin.Instance.StartCoroutine(FindAndSnapshotRoutine(pos));
@@ -130,7 +184,8 @@ namespace TortalPortal
             foreach (Collider c in cols)
             {
                 TeleportWorld tw = c.GetComponentInParent<TeleportWorld>();
-                if (tw != null)
+                // A skipped gate standing beside the new one is not the portal that was just placed.
+                if (tw != null && !SkippedPortals.IsSkipped(tw))
                 {
                     instantiatedPortal = tw;
                     break;
@@ -146,15 +201,42 @@ namespace TortalPortal
         // Every portal this peer knows about. On the server that is the whole world; on a client it is the
         // portals loaded around them, which is all a client is ever sent - see PortalRegistry for why the
         // destination list cannot be built from this.
-        public static List<ZDO> GetAllPortals()
+        // Every portal in the world this peer knows of - minus the corpse gates and the concealed gates, unless
+        // asked for. Both are portal prefabs sitting in the same registry, and neither is a public portal: a
+        // corpse gate is private, temporary and server-owned, and a concealed gate is one nobody has been told
+        // about yet. Neither has any place in the destination index, on the map, in the export or in anyone's
+        // cap count, and THIS is the filter that keeps them out of all four - the index is built from what this
+        // returns. The corpse run, the concealed register and the health scan ask for them explicitly.
+        //
+        // Gates on SkipPortalPrefabs are dropped whatever is asked for: they belong to another mod (or to
+        // vanilla), so nothing of ours - index, map, export, cap, health scan - has any business with them.
+        public static List<ZDO> GetAllPortals(bool includeCorpseGates = false, bool includeConcealed = false)
+        {
+            List<ZDO> all = GetAllPortalsRaw();
+            if (includeCorpseGates && includeConcealed && !SkippedPortals.Any) return all;
+
+            List<ZDO> kept = new List<ZDO>(all.Count);
+            foreach (ZDO zdo in all)
+            {
+                if (SkippedPortals.IsSkipped(zdo)) continue;
+                if (!includeCorpseGates && CorpseRun.IsCorpseGate(zdo)) continue;
+                if (!includeConcealed && ConcealedPortals.IsConcealed(zdo)) continue;
+                kept.Add(zdo);
+            }
+            return kept;
+        }
+
+        private static List<ZDO> GetAllPortalsRaw()
         {
             List<ZDO> allZdos = new List<ZDO>();
             if (ZDOMan.instance == null) return allZdos;
 
-            // ZDOMan keeps its own portal list, maintained as ZDOs are loaded, received and destroyed. It
+            // ZDOMan keeps its own portal registry, maintained as ZDOs are loaded, received and destroyed. It
             // covers every prefab in Game.PortalPrefabHash, so modded portal pieces come along for free, and
-            // it does not walk every sector in the world the way the prefab scan below does.
-            List<ZDO> known = ZDOMan.instance.GetPortals();
+            // it does not walk every sector in the world the way the prefab scan below does. On 1.0 that
+            // registry is bucketed per sector (GetPortals() returns the Dictionary<SectorIndex, List<ZDO>>);
+            // GetPortalList() flattens it into a fresh list, which is the shape this always wanted.
+            List<ZDO> known = ZDOMan.instance.GetPortalList();
             if (known != null)
             {
                 foreach (ZDO zdo in known)
@@ -175,19 +257,36 @@ namespace TortalPortal
             return allZdos;
         }
 
+        // Counted from two sources, because on a client neither one is complete.
+        //
+        // The synced index is the server's whole-world view, so it is the only thing that knows about a gate
+        // the player raised a thousand metres away and has not stood near since - which is exactly what a cap
+        // is meant to catch. What it cannot know is a portal placed in the last few seconds, because the
+        // server republishes on an interval.
+        //
+        // The local ZDOs are the mirror image: current to the frame, but on a dedicated server they only ever
+        // cover what is loaded around the player. Counting those alone is what let a capped player keep
+        // building simply by walking somewhere else first.
+        //
+        // Union by ZDOID rather than adding the two totals, since anything nearby appears in both.
         private static int CountPlayerPortals(long playerID)
         {
-            int count = 0;
-            List<ZDO> allZdos = GetAllPortals();
-            
-            foreach (ZDO zdo in allZdos)
+            // Without this a profile carrying no ID would match every portal that records no creator.
+            if (playerID == 0) return 0;
+
+            HashSet<ZDOID> owned = new HashSet<ZDOID>();
+
+            foreach (PortalRegistry.Entry e in PortalRegistry.GetEntries())
             {
-                if (zdo.GetLong(ZDOVars.s_creator) == playerID)
-                {
-                    count++;
-                }
+                if (e.CreatorId == playerID) owned.Add(e.Id);
             }
-            return count;
+
+            foreach (ZDO zdo in GetAllPortals())
+            {
+                if (zdo.GetLong(ZDOVars.s_creator) == playerID) owned.Add(zdo.m_uid);
+            }
+
+            return owned.Count;
         }
 
         private static IEnumerator TakeSnapshotRoutine(Transform portalTransform)
@@ -547,7 +646,7 @@ namespace TortalPortal
         {
             if (ZDOMan.instance == null) return 0;
             _anchorCountTemp.Clear();
-            ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(pos), SnapshotAnchor.Ring, 0, _anchorCountTemp);
+            ZoneCompat.FindSector(ZoneSystem.GetZone(pos), SnapshotAnchor.Ring, 0, _anchorCountTemp);
             return _anchorCountTemp.Count;
         }
 
@@ -558,7 +657,11 @@ namespace TortalPortal
             List<TeleportWorld> found = new List<TeleportWorld>();
             try
             {
-                foreach (ZDO zdo in GetAllPortals())
+                // includeConcealed: the photographer only ever looks at portals loaded around this player, and a
+                // concealed gate standing in front of them is one of those. Taken whether or not they have
+                // found it yet - the picture lives on the gate's own ZDO and is only ever fetched for a row
+                // that exists, so an unfound gate simply has its photograph ready for the day it is found.
+                foreach (ZDO zdo in GetAllPortals(includeConcealed: true))
                 {
                     if (found.Count >= max) break;
                     if (zdo == null || !zdo.IsValid()) continue;
@@ -717,6 +820,62 @@ namespace TortalPortal
             }
         }
 
+        // Never store a picture the wire cannot carry.
+        //
+        // The snapshot lives on the portal's own ZDO, and a ZDO crosses the wire WHOLE - there is no
+        // mechanism anywhere that splits one. ZDOMan checks its ~10KB packet budget BEFORE appending rather
+        // than after, so an oversized ZDO is appended anyway and goes out alone; ZRpc hands each packet to
+        // the socket as its own Steam message with no coalescing; and Steam refuses any reliable message
+        // over 512 KiB outright with k_EResultInvalidParam.
+        //
+        // What makes that a disaster rather than a dropped picture is ZSteamSocket.SendQueuedPackages: it
+        // PEEKS the head of the send queue and breaks on failure. A refused message is never discarded - it
+        // sits at the head and blocks every packet behind it, retried once a frame, forever. The sender
+        // simply stops talking to the server, is disconnected thirty seconds later by the ZRpc timeout,
+        // reconnects, re-photographs the same gate and does it all again. A boot loop, out of one JPEG.
+        //
+        // 440KB. Steam's ceiling is 512 KiB; ZDOMan may already have packed up to its own ~10KB budget into
+        // the same message ahead of ours, and ZRpc adds framing on top, which leaves roughly 500KB genuinely
+        // available. This sits 60KB under that - and 15KB ABOVE the largest shot a 92-portal world has
+        // actually produced (1080p at quality 85 measured 48KB to 425KB across it), so nothing that fits
+        // today is touched and there is real room for a scene denser than any of them.
+        private const int SnapshotWireBudgetBytes = 440 * 1024;
+
+        // Stepping down costs one portal a slightly softer picture. Not stepping down costs somebody their
+        // session, repeatedly. Only ever reached by a shot that busted the budget at the quality above, so
+        // the ordinary case is still exactly one encode.
+        private static readonly int[] SnapshotQualityLadder = { 85, 75, 65, 55 };
+
+        private static byte[] EncodeWithinWireBudget(Texture2D tex, Vector3 pos)
+        {
+            byte[] bytes = null;
+
+            foreach (int quality in SnapshotQualityLadder)
+            {
+                bytes = tex.EncodeToJPG(quality);
+                if (bytes == null || bytes.Length == 0) return null;
+                if (bytes.Length > SnapshotWireBudgetBytes) continue;
+
+                if (quality != SnapshotQualityLadder[0])
+                {
+                    Plugin.Log.LogInfo(
+                        $"TortalPortal: the shot at ({pos.x:0},{pos.z:0}) needed quality {quality} to fit " +
+                        $"inside the {SnapshotWireBudgetBytes / 1024}KB wire budget ({bytes.Length / 1024}KB).");
+                }
+                return bytes;
+            }
+
+            // Discarded, not stored and not truncated. The portal keeps whichever picture it already had,
+            // and because the refresh pass re-photographs regardless of whether one exists, a later lap in
+            // different weather or a thinner scene will get one that fits.
+            Plugin.Log.LogWarning(
+                $"TortalPortal: the shot at ({pos.x:0},{pos.z:0}) is still {bytes.Length / 1024}KB at the " +
+                $"lowest quality this will try, over the {SnapshotWireBudgetBytes / 1024}KB a ZDO can be " +
+                "sent in - discarding it rather than storing a picture that cannot cross the wire. The " +
+                "portal keeps the picture it had and a later pass will try again.");
+            return null;
+        }
+
         private static void TakeSnapshotCore(Transform portalTransform)
         {
             // The routine that got us here waits a frame between choosing the portal and this call, and in
@@ -796,11 +955,12 @@ namespace TortalPortal
                 cam.targetTexture = null;
                 RenderTexture.active = null;
 
-                // 85 rather than 75, asked for after the 1.2.0b run. Costs roughly a third more bytes per
-                // picture on the wire and in the save; resolution stays 1280x720 on purpose - doubling
-                // pixels would double the ZDO payload again, and the preview panel never shows more than
-                // this anyway.
-                byte[] jpgBytes = tex.EncodeToJPG(85);
+                // Quality starts at 85 - raised from 75 after the 1.2.0b run, at roughly a third more bytes
+                // per picture on the wire and in the save - and steps down only if the result will not fit
+                // in a ZDO. Resolution is the CameraResolution dial and no longer 1280x720; that is exactly
+                // why the budget below stopped being optional.
+                byte[] jpgBytes = EncodeWithinWireBudget(tex, portalTransform.position);
+                if (jpgBytes == null) return; // the finally below still tears the camera down
 
                 // Store in closest ZDO (the one just placed). Ownership has to be claimed first: a portal
                 // somebody else raised is owned by them or by the server, and a write to a ZDO this peer

@@ -120,7 +120,7 @@ namespace TortalPortal
         public static bool WantsCursor() => _instance != null && _instance._isVisible;
 
         // "The cursor is on the mod, not the map." The large map's own mouse handling stands down inside
-        // this - see MapInputPatch. ZInput.mousePosition is bottom-left origin and GUI rects are top-left,
+        // this - see MapInputPatch. ZInput.pointerPosition is bottom-left origin and GUI rects are top-left,
         // hence the flip.
         public static bool IsPointerOverWindow()
         {
@@ -132,7 +132,7 @@ namespace TortalPortal
             if (_instance._pinTarget != null) return true;
             if (_instance._previewExpanded) return true;
 
-            Vector3 mouse = ZInput.mousePosition;
+            Vector3 mouse = ZInput.pointerPosition; // 1.0 renamed mousePosition; also covers the primary touch
             Vector2 gui = new Vector2(mouse.x, Screen.height - mouse.y);
             return SelectWindowRect().Contains(gui);
         }
@@ -453,6 +453,9 @@ namespace TortalPortal
                 _instance.ClearMapPins();
                 _instance.ClearPreview();
 
+                // The window is done with the map, so the permanent markers come back.
+                PortalMapPins.Resume();
+
                 // Hand the keyboard straight back rather than waiting for the next OnGUI, so the player is
                 // never left standing still for a frame after the window closes.
                 _fieldFocused = false;
@@ -518,7 +521,11 @@ namespace TortalPortal
                 };
 
                 e.SearchKey = tag.ToLowerInvariant();
+                // [FOUND] on a concealed gate: it reached this list through the player's own discovery rather
+                // than the server's index, and that is worth saying on the row - it is the one destination
+                // nobody else on the server can necessarily see.
                 e.Label = $"<b>{tag}</b>{(e.Locked ? $"   <color={TortalUITheme.HexLocked}>[LOCKED]</color>" : "")}" +
+                          (src.Concealed ? $"   <color={TortalUITheme.HexMuted}>[FOUND]</color>" : "") +
                           $"\n<size=11><color={TortalUITheme.HexMuted}>{PrettyBiome(e.Biome)}   ·   " +
                           $"{Mathf.RoundToInt(e.Distance)}m   ·   {creator}</color></size>";
 
@@ -975,6 +982,11 @@ namespace TortalPortal
         private void AddMapPins()
         {
             ClearMapPins();
+
+            // The window's markers and the persistent ones cover the same portals, so the persistent set
+            // stands down for as long as this window is up. HideUI hands the map back.
+            PortalMapPins.Suspend();
+
             if (!Configuration.showPortalPinsOnMap.Value || Minimap.instance == null) return;
 
             try
@@ -1876,7 +1888,7 @@ namespace TortalPortal
             // Tell the behaviour patch to sit on the destination's auto-open before we move. The player lands
             // well inside that portal's activation range, so without this it would greet them with the menu
             // again the instant the trip finished - which looked like the menu had never closed.
-            PortalBehaviorPatch.SuppressAutoOpenFor(target.Id);
+            PortalBehaviorPatch.SuppressAutoOpenFor(target.Id, pos);
             HideUI();
 
             // A ridden mount has to be identified BEFORE the teleport starts (the controller reference is
@@ -1892,9 +1904,19 @@ namespace TortalPortal
             if (!Player.m_localPlayer.TeleportTo(pos, rotation, true))
             {
                 Configuration.LogDebug("TeleportTo refused (already teleporting or on cooldown).");
+                // The trip is off, so the arrival suppression must come off with it - left standing it
+                // would eat the auto-open the next time this player walked up to that gate.
+                PortalBehaviorPatch.ClearArrival();
                 return;
             }
             Game.instance.IncrementPlayerStat(PlayerStatType.PortalsUsed);
+
+            // The close above ran in whatever context called us. From the destination list that is inside
+            // OnGUI, which is orderly; from a map double-click it is the middle of Minimap's own event
+            // dispatch, with HideUI deactivating the large map out from under the handler that is still
+            // running. Asking a second time costs nothing - HideUI is idempotent - and means the window is
+            // shut whatever that did to the first request.
+            HideUI();
 
             if (mount != null)
             {

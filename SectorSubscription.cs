@@ -124,9 +124,18 @@ namespace TortalPortal
                 // When the subscription sits inside the peer's own active area their ordinary stream is
                 // already carrying these sectors - appending would put the same ZDOs in the packet twice.
                 // Mirrors the guard in SnapshotAnchor's CreateObjects prefix.
-                Vector2i subZone = ZoneSystem.GetZone(sub.Pos);
-                Vector2i peerZone = ZoneSystem.GetZone(peer.m_peer.GetRefPos());
-                int overlap = ZoneSystem.instance.m_activeArea + SnapshotAnchor.Ring;
+                Vector2s subZone = ZoneSystem.GetZone(sub.Pos);
+                Vector2s peerZone = ZoneSystem.GetZone(peer.m_peer.GetRefPos());
+                // 1.0: the ring a peer's own stream covers is that peer's negotiated SimulationDistance -
+                // the very value vanilla's CreateSyncList hands FindSectorObjects a few lines after this
+                // postfix - rather than a fixed m_activeArea. It sits at default (0,0) for the moment
+                // between connect and the simulation-distance handshake, so fall back to the server's
+                // own synced value until it is filled in.
+                SimulationDistance peerDistance = peer.m_peer.m_simulationDistance;
+                bool peerKnown = peerDistance.TotalSimulationDistance > 0;
+                int near = peerKnown ? peerDistance.NearSimulationDistance : ZoneCompat.ActiveArea;
+                int far = peerKnown ? peerDistance.FarSimulationDistance : ZoneCompat.ActiveDistantArea;
+                int overlap = near + SnapshotAnchor.Ring;
                 if (Mathf.Abs(subZone.x - peerZone.x) <= overlap &&
                     Mathf.Abs(subZone.y - peerZone.y) <= overlap)
                 {
@@ -140,12 +149,18 @@ namespace TortalPortal
                 // answer (it is what the server runs around every peer): it creates the zone's vegetation
                 // and location ZDOs without keeping instances. One zone per send tick - SpawnZone is
                 // synchronous - and the new ZDOs join the very same FindSectorObjects sweep below.
+                //
+                // Worth knowing while reading this: generating a zone reaches PlaceLocations ->
+                // SpawnLocation, whose last act is SnapToGround.SnappAll() - a GLOBAL drain that snaps
+                // every pending snapper on this server, wherever it happens to be standing. SnapGuard is
+                // what makes that safe, and it needs nothing from here: it asks whether the ground under
+                // each snapper is actually finished rather than trying to work out who fired the drain.
                 for (int y = subZone.y - SnapshotAnchor.Ring; y <= subZone.y + SnapshotAnchor.Ring; y++)
                 {
                     bool spawnedOne = false;
                     for (int x = subZone.x - SnapshotAnchor.Ring; x <= subZone.x + SnapshotAnchor.Ring; x++)
                     {
-                        Vector2i z = new Vector2i(x, y);
+                        Vector2s z = new Vector2s(x, y);
                         if (!ZoneSystem.instance.IsZoneGenerated(z) &&
                             ZoneSystem.instance.SpawnZone(z, ZoneSystem.SpawnMode.Ghost, out _))
                         {
@@ -160,9 +175,11 @@ namespace TortalPortal
                 // Distant ring, same correction as SnapshotAnchor: 0 asked for no distant objects at
                 // all rather than a few. On a dedicated server this is the ONLY way they can reach a
                 // client - it holds nothing it was not sent - so the empty horizon was doubly
-                // guaranteed out here. Vanilla's own send path uses m_activeDistantArea (ZDOMan
-                // CreateSyncList); a subscribed sector is treated the same as a peer's own.
-                __instance.FindSectorObjects(subZone, SnapshotAnchor.Ring, ZoneSystem.instance.m_activeDistantArea, TempSectorZdos);
+                // guaranteed out here. Vanilla's own send path sweeps the peer's far simulation distance
+                // (ZDOMan.CreateSyncList; on 1.0 that is peer.m_peer.m_simulationDistance); a subscribed
+                // sector is treated the same as a peer's own. ZoneCompat passes a classic SimulationDistance
+                // so the sweep stays the square block it was pre-1.0 - see that file.
+                ZoneCompat.FindSector(subZone, SnapshotAnchor.Ring, far, TempSectorZdos);
                 foreach (ZDO zdo in TempSectorZdos)
                 {
                     if (peer.ShouldSend(zdo)) toSync.Add(zdo);
