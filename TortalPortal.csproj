@@ -4,11 +4,19 @@
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>TortalPortal</AssemblyName>
     <Description>Total Portal Control System for Valheim</Description>
-    <Version>1.3.1</Version>
+    <Version>1.6.4</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>TortalPortal</RootNamespace>
     <NoWarn>CS8632;CS0618</NoWarn>
+    <!-- The package ships the PDB that matches the DLL (owner rule, 2026-11-20), so a player's error log carries
+         file and line numbers. Deterministic + PathMap: no builder's home path in the DLL or PDB, and a rebuild of
+         unchanged source is byte-identical. No SourceLink: it would embed the local repo path and the git commit. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=TortalPortal</PathMap>
+    <DebugType>portable</DebugType>
+    <EnableSourceLink>false</EnableSourceLink>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
   </PropertyGroup>
 
   <ItemGroup>
@@ -100,8 +108,12 @@
     </Reference>
   </ItemGroup>
 
+  <!-- MSBuild's own tasks rather than a shelled-out "mkdir"/"copy": those are cmd builtins and fail the
+       build outright on Linux, which is where this project is built now. MakeDir and Copy do the same two
+       jobs on either OS, and MakeDir is happy when the folder already exists. -->
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command="mkdir &quot;$(ProjectDir)HexiumDist\plugins&quot;&#xD;&#xA;copy /Y &quot;$(TargetDir)$(TargetName).dll&quot; &quot;$(ProjectDir)HexiumDist\plugins\$(TargetName).dll&quot;" />
+    <MakeDir Directories="$(ProjectDir)HexiumDist/plugins" />
+    <Copy SourceFiles="$(TargetPath);$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ProjectDir)HexiumDist/plugins" />
   </Target>
 
 </Project>

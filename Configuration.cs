@@ -3,6 +3,7 @@ using ServerSync;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Splatform;
 using UnityEngine;
 
 namespace TortalPortal
@@ -47,16 +48,111 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.3.1",
-            // Raised to 1.3.0 with the 1.3.1 release, by the owner's call. The strict wire test would
-            // have let 1.2.x stay (no new RPCs since), but 1.3.0 is where the shared artwork landed -
-            // the shipped icon set, the server-streamed icon catalogue - and a mixed 1.2.x table reads
-            // different maps for the same world: markers one player sees and another cannot. The floor
-            // turns that into a clear version-mismatch message at the handshake instead.
+            CurrentVersion = "1.6.4",
+            // NO floor change for 1.6.4, which adds SkipPortalPrefabs. The server builds the destination index
+            // and leaves skipped gates out of it, so even a 1.6.2 client is never offered one as a destination
+            // and nothing on the wire changed shape - the new setting is one more synced string, which an older
+            // client simply does not have an entry for. (1.6.3 was a store-page-only release, same DLL as 1.6.2.) What an older client still does is take a skipped gate
+            // over for itself when it walks up to one: it opens the window there and can leave by it. That is
+            // local to that player, harms nobody else's game and writes nothing to the world, the same size of
+            // unfairness the 1.6.0 note below accepted for concealed gates.
+            //
+            // NO floor change for 1.6.2: a rebuild for Valheim 1.0 (network version 41), nothing on the wire.
+            //
+            // NO floor change for 1.6.1. It is a window that opened itself at the far end of a trip:
+            // entirely local, nothing on the wire, nothing written to the world. A 1.6.0 client on a 1.6.1
+            // table behaves identically apart from being greeted by its own destination window on arrival.
+            //
+            // NO floor change for 1.6.0, which adds the concealed gates. A 1.5.x client on a 1.6.0 server
+            // degrades cleanly rather than desyncing: concealed gates are withheld from the published index,
+            // so an old client is never sent one and simply never has them as destinations, and the reveal is
+            // a routed RPC it never registered - an unknown routed method is dropped by the receiving peer,
+            // which is the same shape SectorSubscription relies on. The one visible difference is that an old
+            // client walking up to a concealed gate gets the ordinary destination window on it, because it
+            // does not run the guard that holds the menu shut until the gate is found - it can depart from a
+            // gate it has not discovered, but it can never travel TO one, because it holds no row for any of
+            // them. That is a smaller unfairness than turning the whole table away for a feature that does
+            // nothing at all until an admin seeds a world.
+            //
+            // Raised to 1.5.0 with the 1.5.0 release. Three reasons, any one of which would do. A 1.4.7
+            // client never reports a death, so it would get no corpse gate while everyone else did; walking up
+            // to somebody else's corpse gate, it would open the full destination window on a server-minted
+            // gate that is meant to lead one place; and it does not run the portal guard, so a troll standing
+            // next to a 1.4.7 player can still knock a "self-healing" portal down while the ZDO is that
+            // player's to own. A rule that binds some of the table and not the rest is worse than a version
+            // message - the same call as 1.4.0 and 1.4.3.
+            //
+            // NO floor change for 1.4.7 either. It is the Valheim 1.0.7 rebuild: nothing on the wire and
+            // nothing written to the world changed. The floor is academic here anyway - a 1.4.6 build cannot
+            // load on 1.0.7 at all (its Minimap patch binds to a member 1.0 deleted, so PatchAll fails and
+            // the whole plugin is down), so a client below 1.4.7 does not reach a 1.0.7 table with this mod.
+            // NO floor change for 1.4.6. It is a menu that failed to close on one of the two ways of
+            // travelling - entirely local, entirely cosmetic, nothing on the wire and nothing written to
+            // the world. A 1.4.5 client on a 1.4.6 server behaves identically apart from the stuck window,
+            // and turning that table away to fix a window would cost every player an update for nothing.
+            //
+            // Raised to 1.4.5, and for a reason that is not about this mod's own wire at all: an
+            // un-updated client actively damages the world for everybody else. Vanilla's SnapToGround
+            // keeps one global list of everything waiting to be put on the ground, and Snap WRITES the
+            // height it lands on into the ZDO whenever that peer owns the ZNetView. A client below 1.4.5
+            // has no guard on any of that: it snaps the trader standing in the zone somebody else is
+            // walking into against terrain that has not finished arriving, and writes her under her own
+            // hut for the entire table.
+            //
+            // 1.4.5 does now REPAIR that rather than only preventing it, which is a fair argument that the
+            // floor could be relaxed - an updated client arriving puts her back on the ground whoever put
+            // her under it. The floor stays anyway, and the repair is the reason: on a mixed table the two
+            // halves fight. The stale client buries her on its next far shot, the updated client claims her
+            // and lifts her out, and the pair of them hand her back and forth for as long as both are
+            // connected. A trader who is reliably wrong is better than a trader who is intermittently wrong
+            // and generating ownership churn while she does it.
+            //
+            // 1.4.4 was folded with the prevention half only and never released; 1.4.5 supersedes it.
+            //
+            // Was 1.4.3 before that, and that one earned it too. Every build before this one registered its synced
+            // settings without ever registering a LOCKING entry, which left ConfigSync.IsLocked permanently
+            // false - so every client was free to broadcast its own config file at the whole server, and the
+            // server was free to adopt it from anyone. The effective portal cap on a live server drifted
+            // between numbers nobody had set while the server's own config file said something else again.
+            //
+            // The server-side half of the fix holds against any client: a 1.4.3 server refuses a config push
+            // from a non-admin whatever version sent it. The client-side half does not. A client below 1.4.3
+            // has no LockConfiguration entry to receive, so its own IsLocked stays false and it will still
+            // push its settings straight at every other client in the world, the server's refusal
+            // notwithstanding - and its admins still have no bypass, because reading the game's own admin
+            // list is 1.4.3 code. Both holes close only when both ends are on it, so the floor makes it a
+            // version message instead of a rule that quietly applies to some of the table.
+            //
+            // Was 1.4.0 for the 1.4.2 release, and that one was worth being explicit about because it looks
+            // like a wire change and is not. 1.4.2 fills in the owner NAME the index has always carried a
+            // slot for: the Creator string has been the third field of format version 1 since 1.0.0, and it
+            // has been going out empty on every portal ever published. Nothing was added, moved or resized -
+            // a byte that was always there stopped being blank. A 1.4.0 client reads it exactly where it has
+            // always read it and starts showing names without being updated at all.
+            //
+            // Left at 1.4.0 for the 1.4.1 release, deliberately. Everything 1.4.1 changed is server-side -
+            // where the owner names come from - and nothing about the wire or the way the cap is counted
+            // moved, so a 1.4.0 client on a 1.4.1 server behaves identically and gets the same names in its
+            // destination list. Turning that table away would cost every player an update to fix a file only
+            // the admin reads.
+            //
+            // Raised to 1.4.0 with the 1.4.0 release, by the owner's call. The wire alone would not have
+            // demanded it - the creator IDs ride in an appended block a 1.3.1 client reads straight past -
+            // but the portal cap would be enforced differently either side of the table. A 1.4.0 client
+            // counts the server's whole-world index and is held to the limit; a 1.3.1 client counts only
+            // what is loaded around it and can still walk somewhere quiet and keep building. One rule that
+            // applies to some players and not others is worse than a version message, so the floor makes it
+            // a version message.
+            //
+            // The previous floor was 1.3.0, set at the 1.3.1 release, where the shipped icon set and the
+            // server-streamed icon catalogue landed - a mixed 1.2.x table read different maps for the same
+            // world.
             //
             // Raising this is a BREAKING change for anyone still on an older build: they are turned away at
             // the handshake rather than let in to desync. Every client has to update alongside the server.
-            MinimumRequiredVersion = "1.3.0"
+            // Note it also cuts the other way while testing - a 1.4.0 client will now refuse a server below
+            // 1.4.0, because the check is symmetric.
+            MinimumRequiredVersion = "1.5.0"
         };
 
         // Where the migration stamp lives. Named here so ConfigMigration can find it in a raw file that
@@ -66,16 +162,23 @@ namespace TortalPortal
 
         public static ConfigEntry<int> configVersion;
 
+        public static ConfigEntry<bool> lockConfiguration;
+
         public static ConfigEntry<FilterMode> filterMode;
         public static ConfigEntry<string> whitelistItems;
         public static ConfigEntry<string> blacklistItems;
+        public static ConfigEntry<string> skipPortalPrefabs;
         public static ConfigEntry<int> maxPortalsPerPlayer;
         public static ConfigEntry<bool> adminBypass;
+        public static ConfigEntry<bool> enablePortalExport;
+        public static ConfigEntry<float> portalExportIntervalSeconds;
         public static ConfigEntry<bool> allowTames;
         public static ConfigEntry<float> tameFollowRadius;
         public static ConfigEntry<bool> allowMountedTeleport;
         public static ConfigEntry<float> menuOpenDistance;
         public static ConfigEntry<float> menuCloseMargin;
+        public static ConfigEntry<float> menuVerticalDistance;
+        public static ConfigEntry<bool> menuRequireVerticalLineOfSight;
         public static ConfigEntry<bool> enableCustomVFX;
         public static ConfigEntry<float> vfxOrbHeightOffset;
         public static ConfigEntry<float> vfxWakeDistance;
@@ -92,6 +195,7 @@ namespace TortalPortal
         public static ConfigEntry<bool> livePreviews;
         public static ConfigEntry<bool> anchoredEnvironment;
         public static ConfigEntry<bool> anchoredSpawning;
+        public static ConfigEntry<bool> repairSunkenTraders;
         public static ConfigEntry<CameraResolution> cameraResolution;
         public static ConfigEntry<int> anchorRing;
         public static ConfigEntry<float> anchorTimeoutSeconds;
@@ -107,6 +211,23 @@ namespace TortalPortal
         public static ConfigEntry<bool> openFavoritesView;
         public static ConfigEntry<bool> focusSearchOnOpen;
         public static ConfigEntry<bool> enableDebugMode;
+        public static ConfigEntry<bool> selfHealingPortals;
+        public static ConfigEntry<bool> enableCorpseRun;
+        public static ConfigEntry<float> corpseRunGateTtlMinutes;
+        public static ConfigEntry<float> corpseRunMaxGraveAgeMinutes;
+        public static ConfigEntry<float> corpseRunClearanceMeters;
+        public static ConfigEntry<float> corpseRunMinRoomMeters;
+        public static ConfigEntry<float> corpseRunSearchRadiusMeters;
+        public static ConfigEntry<float> corpseRunGraveOffsetMeters;
+        public static ConfigEntry<float> corpseRunBedOffsetMeters;
+        public static ConfigEntry<bool> enableConcealedPortals;
+        public static ConfigEntry<bool> concealedDiscoveryShared;
+        public static ConfigEntry<float> healthScanIntervalSeconds;
+        public static ConfigEntry<bool> autoRepair;
+        public static ConfigEntry<bool> repairDryRunDefault;
+        public static ConfigEntry<int> repairMaxActionsPerRun;
+        public static ConfigEntry<int> snapshotRetain;
+        public static ConfigEntry<bool> snapshotOnWorldSave;
 
         public static void Init(ConfigFile config)
         {
@@ -117,13 +238,25 @@ namespace TortalPortal
             configVersion = config.Bind(MetaSection, ConfigVersionKey, ConfigMigration.CurrentConfigVersion,
                 "Internal bookkeeping - the layout version of this file, used to carry your settings across mod updates. Do not edit.");
 
+            // FIRST in the section, and bound before anything it governs, because it is the setting that
+            // decides whether any of the others mean anything on a client.
+            lockConfiguration = config.Bind("1 - General", "LockConfiguration", true,
+                "Server only, and on by default. Makes the SERVER's copy of the shared settings the one that counts: every client is sent the server's values when it joins and cannot push its own back over them. Off - which is how every build before 1.4.3 behaved, having no such switch - any player's config file silently becomes everyone's: one player who still has MaxPortalsPerPlayer sitting at 10 in their own file sets the cap at 10 for the entire server the moment they touch a setting in-game, and the server's config file and its live settings quietly stop agreeing about what the rules are. Server admins are exempt either way, so an admin can still turn a dial in-game and have it apply to the whole table. Only the shared, world-affecting settings are covered; colours, UI scale, map pin preferences and the rest are yours alone and have never been sent anywhere.");
+
             filterMode = config.Bind("1 - General", "FilterMode", FilterMode.Vanilla, "Determines how portal item filters behave: Vanilla, WhitelistBlacklist, BypassAll (everything allowed).");
             whitelistItems = config.Bind("1 - General", "WhitelistItems", "", "Comma-separated list of prefab names. If populated, ONLY these items can be teleported.");
             blacklistItems = config.Bind("1 - General", "BlacklistItems", "", "Comma-separated list of prefab names. Any item here CANNOT be teleported.");
+            skipPortalPrefabs = config.Bind("1 - General", "SkipPortalPrefabs", "",
+                "Portal prefabs TortalPortal leaves alone, comma-separated - for portals other mods add that work their own way (one-way gates, dungeon or instance portals, gates with their own menu). A listed portal behaves exactly as it would without this mod: no destination window, vanilla tag pairing, no runic gateway, no damage immunity, and it never appears in anyone's destination list, on the map, in the export or against the portal cap. Names are prefab names, not case-sensitive, e.g. \"portal_stone, MWL_Portal\"; * matches anything, so \"MWL_*\" covers a whole family. Empty (the default) means every portal is TortalPortal's. Gates this mod raises itself (corpse and concealed gates) are never skipped. Applies live; the destination list catches up at the next index refresh.");
             
             maxPortalsPerPlayer = config.Bind("2 - Limits", "MaxPortalsPerPlayer", 0,
                 "Maximum portals a single player can place. 0 (the default) or any negative number disables the limit entirely - nobody is capped until an admin sets a positive number here.");
             adminBypass = config.Bind("2 - Limits", "AdminBypass", true, "Allows admins to bypass max portal limits, PIN locks, and item filters.");
+            enablePortalExport = config.Bind("2 - Limits", "EnablePortalExport", true,
+                "Server only. Writes who owns how many portals to BepInEx/config/TortalPortal/portals/barrkbot_portals.json every so often, so an admin can see who is at their cap without counting by hand. It also powers the player-name register, which is where the destination list gets the 'Owner' on each row - so turning it off writes no file, creates no folder, has the server keep no record of which player name goes with which ID, and leaves every Owner in the portal list reading 'Unknown'.");
+            portalExportIntervalSeconds = config.Bind("2 - Limits", "PortalExportIntervalSeconds", 60f,
+                new ConfigDescription("How often that file is rewritten, in seconds. It is a whole-world portal count, so there is little point going faster than the portal index itself refreshes.",
+                                      new AcceptableValueRange<float>(15f, 900f)));
             
             allowTames = config.Bind("3 - Features", "AllowTames", true, "If true, tameable creatures near the player will teleport with them.");
             tameFollowRadius = config.Bind("3 - Features", "TameFollowRadius", 10f,
@@ -140,6 +273,16 @@ namespace TortalPortal
             menuCloseMargin = config.Bind("3 - Features", "MenuCloseMargin", 1f,
                 new ConfigDescription("Extra metres beyond MenuOpenDistance you have to retreat before an open destination window closes itself. This is the hysteresis that stops the window strobing when you hover right on the boundary.",
                                       new AcceptableValueRange<float>(0f, 5f)));
+            // The companion to MenuOpenDistance. That one is measured flat across the ground, which on its
+            // own means a player flying or walking directly OVER a gate is nought metres away from it and
+            // the window opens in their face. This is the other half of the cylinder.
+            menuVerticalDistance = config.Bind("3 - Features", "MenuVerticalDistance", 2f,
+                new ConfigDescription("How far above or below the gate's footing, in metres, you may stand and still have the destination window open by itself. MenuOpenDistance is measured flat across the ground, so without this a player walking the floor above a portal - or flying over it - counts as standing in the gate. 2m clears stairs, platforms and the slope a gate is planted on, and stops the storey above. MenuCloseMargin applies here too once the window is open.",
+                                      new AcceptableValueRange<float>(0.25f, 10f)));
+            // Local: whether your own client bothers with the raycast is your business, and a player who
+            // has built something this misreads wants the switch without waiting on an admin.
+            menuRequireVerticalLineOfSight = config.Bind("3 - Features", "MenuRequireVerticalLineOfSight", true,
+                "If true, a solid floor, roof or ceiling between you and the gate below you keeps the destination window shut even when you are within MenuVerticalDistance of it. This is what separates standing on the storey above a portal from standing on a rock beside it, both of which are the same number of metres up. Only ever checked when you are ABOVE the gate; the column looked along is the gate's own, so nothing you build next to a portal can block it.");
             enableCustomVFX = config.Bind("3 - Features", "EnableCustomVFX", true, "Replaces vanilla portal VFX with a custom procedural runic gateway, coloured by VFXColour.");
             // Deliberately NOT server-synced: this is a local visual nudge, not a rule of the world.
             vfxOrbHeightOffset = config.Bind("3 - Features", "VFXOrbHeightOffset", 0f, "Vertical nudge in metres for the rune orb inside the gate. The orb is auto-centred on each portal's own arch, so this is only for fine-tuning.");
@@ -186,6 +329,47 @@ namespace TortalPortal
                 "The metal of the window frames. The deep shadow and bright highlight tones are derived from this one colour, so silver, bronze or verdigris is a single change. Applies live.");
             enablePortalCameraShot = config.Bind("3 - Features", "EnablePortalCameraShot", true, "If true, takes a camera snapshot when a portal is placed for the UI preview.");
             snapshotRefreshIntervalMinutes = config.Bind("3 - Features", "SnapshotRefreshIntervalMinutes", 5, "Interval in minutes for the background coroutine to re-photograph portals that already have a picture, so a destination that has been built up or burnt down does not keep showing the old view. 5 rather than 30: a portal only gets photographed while a player is standing near it anyway, so a long interval mostly meant missing the chance entirely. Set to 0 to disable refreshes - portals with no picture at all are still filled in regardless.");
+            repairSunkenTraders = config.Bind("3 - Features", "RepairSunkenTraders", true,
+                "On by default. Watches Haldor, Hildir and the Bog Witch for half a minute after they appear and puts them back on the ground if they are standing under it. Vanilla snaps a trader to the ground twice - once directly, one frame after she spawns, and once more on the next global snap pass - and if her zone's terrain edits have not arrived by then she is left below the finished surface and the wrong height is written into the world. This is the only part of the fix that can reach a trader who is ALREADY buried on a live world; the rest only stops it happening again. Only ever lifts her up to the terrain, never down onto it, so a trader standing on a platform or a player-built floor is left where she is.");
+
+            selfHealingPortals = config.Bind("3 - Features", "SelfHealingPortals", true,
+                "On by default. Portals shrug off damage: monsters stop choosing them as targets, any hit that lands is refused, and a portal found below full health is healed. Removal with the hammer is unaffected - a portal is still its builder's to take down. Corpse gates are always protected, whatever this says.");
+
+            enableCorpseRun = config.Bind("6 - Corpse Run", "EnableCorpseRun", true,
+                "On by default. When a player dies, the server raises a private, temporary portal near where they will respawn - their bed, or the start temple if they have none - leading straight to their tombstone. One way by design: the grave-side gate is an exit. Both gates come down when the grave is emptied, or after CorpseRunGateTtlMinutes if that is set.");
+            corpseRunGateTtlMinutes = config.Bind("6 - Corpse Run", "CorpseRunGateTtlMinutes", 0f,
+                new ConfigDescription("How long a corpse gate stands before closing on its own if the grave has not been emptied by then. 0 means no limit: the gate stands until the grave is empty, which is the point of it. This replaces CorpseRunTtlMinutes, whose 30-minute default shut gates while their owner was still walking back - a corpse run across half the map is longer than half an hour, and the gate closing mid-run is worse than no gate at all.", new AcceptableValueRange<float>(0f, 1440f)));
+            corpseRunMaxGraveAgeMinutes = config.Bind("6 - Corpse Run", "CorpseRunMaxGraveAgeMinutes", 30f,
+                new ConfigDescription("Only used for a grave nobody reported - one still standing after a server restart, or a death whose report never arrived. How old (in game minutes, which do not advance while the server is down) such a grave may be and still earn a gate. 0 means no limit. Deliberately NOT the same dial as the gate's own lifetime: a grave abandoned days ago should not raise a gate at its owner's bed on every login, while a gate for a death that just happened should stand until the body is collected.", new AcceptableValueRange<float>(0f, 1440f)));
+            corpseRunClearanceMeters = config.Bind("6 - Corpse Run", "CorpseRunClearanceMeters", 10f,
+                new ConfigDescription("Room every corpse gate (both ends) must have from every tree, rock, building piece, portal and generated location, measured edge to edge from the portal frame and from each object's real footprint rather than its pivot. Tiny props (mushrooms, flowers, berry bushes) only need 2m. If no spot inside the search radius can honour it, the most open dry spot found is used and the server log says so.", new AcceptableValueRange<float>(1f, 30f)));
+            corpseRunMinRoomMeters = config.Bind("6 - Corpse Run", "CorpseRunMinRoomMeters", 2f,
+                new ConfigDescription("The hard floor under CorpseRunClearanceMeters. The clearance above is a preference, not a requirement: nowhere in a Valheim forest has ten metres of edge-to-edge room from everything, so it is scanned in descending steps and the gate takes the closest spot that honours the largest step the ground can actually offer. This is the least room the frame will ever be given; only when nothing inside the search radius can offer even this does the gate fall back to the most open dry spot found. Raise it to refuse cramped spots outright, at the cost of a longer walk.", new AcceptableValueRange<float>(0.5f, 10f)));
+            corpseRunSearchRadiusMeters = config.Bind("6 - Corpse Run", "CorpseRunSearchRadiusMeters", 40f,
+                new ConfigDescription("How far out from the tombstone (and from the bed) to look for a spot honouring the clearance on dry, level ground. Rings are scanned outward, so the gate lands as close as the clearance allows; a bigger radius only matters in dense forest or built-up ground, at the cost of a longer walk from gate to grave.", new AcceptableValueRange<float>(5f, 150f)));
+            corpseRunGraveOffsetMeters = config.Bind("6 - Corpse Run", "CorpseRunGraveOffsetMeters", 2f,
+                new ConfigDescription("Minimum distance from the tombstone at which the grave-side gate may stand.", new AcceptableValueRange<float>(1f, 20f)));
+            corpseRunBedOffsetMeters = config.Bind("6 - Corpse Run", "CorpseRunBedOffsetMeters", 3f,
+                new ConfigDescription("Minimum distance from the bed (or the start temple) at which the bed-side gate may stand.", new AcceptableValueRange<float>(1f, 20f)));
+
+            enableConcealedPortals = config.Bind("8 - Concealed Gates", "EnableConcealedPortals", true,
+                "Server only, and on by default - it does nothing at all until an admin seeds a world with tortal_scatterconcealed. A concealed gate is a real portal standing in the wilderness that is deliberately kept out of the published portal index, so no client is sent its position, its name, or the fact that it exists: it appears in nobody's destination list and on nobody's map until a player walks up to it and presses E, at which point the server hands that one gate to that one player. Turning this off leaves any gates already standing where they are and simply stops them being discovered or handed out - they do not become visible, and tortal_concealedclear is how you actually get rid of them.");
+            concealedDiscoveryShared = config.Bind("8 - Concealed Gates", "ConcealedDiscoveryShared", false,
+                "Server only. Off by default: each player has to find a concealed gate for themselves. Turn it on and the first player to touch a gate reveals it for everybody on the server, which suits a group that travels together. Switching it on does not retroactively publish gates individuals had already found on their own - it applies from the next discovery onwards.");
+
+            healthScanIntervalSeconds = config.Bind("7 - Portal Health", "HealthScanIntervalSeconds", 120f,
+                new ConfigDescription("Server only. How often the background health scan walks every portal in the world looking for trouble: portals buried in the terrain, destination photographs too large to send, map icons the server does not have, players over the portal cap, stray corpse gates. Findings are logged and read back with tortal_health.", new AcceptableValueRange<float>(10f, 3600f)));
+            autoRepair = config.Bind("7 - Portal Health", "AutoRepair", false,
+                "Server only. Off by default. Runs the repair pass on the scan's own timer. Whether it writes anything is decided by RepairDryRunDefault: with that on (the default) the automatic pass only reports what it would do.");
+            repairDryRunDefault = config.Bind("7 - Portal Health", "RepairDryRunDefault", true,
+                "Server only. On by default. The automatic repair pass reports instead of writing. The console command is unaffected - tortal_repair is always a dry run and only tortal_repair --apply writes, after taking a snapshot.");
+            repairMaxActionsPerRun = config.Bind("7 - Portal Health", "RepairMaxActionsPerRun", 20,
+                new ConfigDescription("Server only. The most fixes a single repair pass will apply. The rest wait for the next pass, so a bad scan can never rewrite the whole world in one go.", new AcceptableValueRange<int>(1, 500)));
+            snapshotRetain = config.Bind("7 - Portal Health", "SnapshotRetain", 30,
+                new ConfigDescription("Server only. How many automatic snapshots (pre-save, pre-repair) to keep in BepInEx/config/TortalPortal/snapshots before the oldest are deleted. Named snapshots taken by hand are never pruned.", new AcceptableValueRange<int>(1, 1000)));
+            snapshotOnWorldSave = config.Bind("7 - Portal Health", "SnapshotOnWorldSave", true,
+                "Server only. On by default. Takes a snapshot of every portal's settings each time the world saves, so there is always a recent one to restore from.");
+
             remoteSnapshots = config.Bind("3 - Features", "EnableRemoteSnapshots", true,
                 "Quietly load the world around ONE never-photographed portal at a time - out where nobody is standing - photograph it and unload it again, so portals nobody visits still get their picture. On a hosted world the hosting player's game does this from its own memory; on a dedicated server (which draws nothing itself) each player's game asks the server for the far portal's surroundings, photographs it and hands the picture back. Costs whoever is doing it a few seconds of background zone loading per portal. Off returns to photographs only being taken where somebody actually walks.");
             // EXPERIMENTAL, and off. The stored photograph is the shipped feature and it is finished;
@@ -267,19 +451,34 @@ namespace TortalPortal
 
             enableDebugMode = config.Bind("4 - Debug", "EnableDebugLogging", false, "Enable verbose logging to the console for debugging UI and teleportation events.");
 
+            // AddLockingConfigEntry rather than AddConfigEntry: this is the one entry ConfigSync reads to
+            // decide whether the server's values are binding on a client at all. Registered the ordinary way
+            // it would sync the switch itself and switch precisely nothing.
+            configSync.AddLockingConfigEntry(lockConfiguration);
+
             configSync.AddConfigEntry(filterMode);
             configSync.AddConfigEntry(whitelistItems);
             configSync.AddConfigEntry(blacklistItems);
+            // Synced: which gates are TortalPortal's is one answer for the whole table. Half the players opening
+            // the window on a gate the other half sees as a vanilla portal would split the network in two.
+            configSync.AddConfigEntry(skipPortalPrefabs);
             configSync.AddConfigEntry(maxPortalsPerPlayer);
+            // Synced so a client can tell whether the server wants name claims at all. Without it, "off"
+            // would still have every client posting its name to a server that only drops them on the floor.
+            configSync.AddConfigEntry(enablePortalExport);
             configSync.AddConfigEntry(adminBypass);
             configSync.AddConfigEntry(allowTames);
             configSync.AddConfigEntry(tameFollowRadius);
             configSync.AddConfigEntry(allowMountedTeleport);
             configSync.AddConfigEntry(menuOpenDistance);
+            // Synced for the same reason as MenuOpenDistance: how close is close enough to be at a gate is
+            // one shape, and half of it travelling while the other half stays local would be an odd shape.
+            configSync.AddConfigEntry(menuVerticalDistance);
             configSync.AddConfigEntry(enableCustomVFX);
             configSync.AddConfigEntry(enablePortalCameraShot);
             configSync.AddConfigEntry(snapshotRefreshIntervalMinutes);
             configSync.AddConfigEntry(remoteSnapshots);
+            configSync.AddConfigEntry(repairSunkenTraders);
             configSync.AddConfigEntry(livePreviews);
             configSync.AddConfigEntry(anchoredEnvironment);
             configSync.AddConfigEntry(anchoredSpawning);
@@ -289,6 +488,20 @@ namespace TortalPortal
             configSync.AddConfigEntry(anchorSettleRadius);
             configSync.AddConfigEntry(portalIndexRefreshSeconds);
             configSync.AddConfigEntry(shareIconsFromServer);
+            configSync.AddConfigEntry(selfHealingPortals);
+            configSync.AddConfigEntry(enableCorpseRun);
+            configSync.AddConfigEntry(corpseRunGateTtlMinutes);
+            configSync.AddConfigEntry(corpseRunMaxGraveAgeMinutes);
+            configSync.AddConfigEntry(corpseRunClearanceMeters);
+            configSync.AddConfigEntry(corpseRunMinRoomMeters);
+            configSync.AddConfigEntry(corpseRunSearchRadiusMeters);
+            configSync.AddConfigEntry(corpseRunGraveOffsetMeters);
+            configSync.AddConfigEntry(corpseRunBedOffsetMeters);
+            // Synced so a client can tell whether the server runs concealed gates at all, and under which rule.
+            // Without it, a client's own file could decide to stop asking for reveals on a server that offers
+            // them, or to keep asking on one that does not.
+            configSync.AddConfigEntry(enableConcealedPortals);
+            configSync.AddConfigEntry(concealedDiscoveryShared);
 
             // Pushes anything that moved into its new home, stamps the file and saves it.
             ConfigMigration.Finish(config, configVersion);
@@ -373,9 +586,92 @@ namespace TortalPortal
             }
         }
 
+        // Admin, as far as this mod is concerned - and asked of two authorities on purpose, because the one
+        // it used to ask on its own is false at exactly the wrong moments.
+        //
+        // ConfigSync.IsAdmin is ServerSync's own answer, and on a client it is nothing but the "lockexempt"
+        // flag out of the config package the server sends during login. If that package is late, is missed,
+        // or simply never lands, the flag stays false and every admin on the server is quietly demoted to an
+        // ordinary player - no portal cap bypass, no PIN bypass, no item filter bypass, and not one line
+        // anywhere saying why. It is also a static that ZNet.Shutdown never clears, so it can be stale in the
+        // other direction after a world change.
+        //
+        // The game keeps its own copy of the same fact and hands it to EVERY client: ZNet sends the admin
+        // list on RPC_PeerInfo and ZNet.GetAdminList reads it back. That is the authority vanilla itself
+        // uses for its own admin commands, it needs no mod at either end, and it is correct from the moment
+        // the player is connected. Either source saying yes is enough; both have to say no to refuse anyone.
         public static bool IsAdmin()
         {
-            return adminBypass.Value && configSync.IsAdmin;
+            try
+            {
+                if (adminBypass == null || !adminBypass.Value) return false;
+                return configSync.IsAdmin || LocalPlayerIsServerAdmin();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError($"TortalPortal: could not establish admin status, treating this player as an ordinary one. Reason: {ex}");
+                return false;
+            }
+        }
+
+        private static bool _adminCache;
+        private static float _adminCacheStamp = float.NegativeInfinity;
+
+        // Cached for a second, because this is reached from OnGUI - the destination window asks on every
+        // repaint - while the answer only changes when ZNet hands the client a new list, which it does once,
+        // at login. A second of staleness across a world change costs nothing and expires on its own.
+        public static bool LocalPlayerIsServerAdmin()
+        {
+            float now = Time.realtimeSinceStartup;
+            if (now - _adminCacheStamp < 1f) return _adminCache;
+            _adminCacheStamp = now;
+            _adminCache = false;
+
+            try
+            {
+                if (ZNet.instance == null) return false;
+
+                // The host and the dedicated server ARE the authority - there is no list to be on.
+                if (ZNet.instance.IsServer())
+                {
+                    _adminCache = true;
+                    return true;
+                }
+
+                List<string> admins = ZNet.instance.GetAdminList();
+                if (admins == null || admins.Count == 0) return false;
+
+                string me = PlatformManager.DistributionPlatform.LocalUser.PlatformUserID.ToString();
+                if (string.IsNullOrEmpty(me)) return false;
+
+                // "Steam_76561198...". adminlist.txt is allowed to hold either that or the bare number, and
+                // vanilla's own ZNet.ListContainsId accepts the bare form for Steam ONLY - so this matches
+                // that rule rather than inventing a looser one that could hand admin to a different
+                // platform's identically numbered account.
+                int sep = me.IndexOf('_');
+                bool steam = sep > 0 && string.Equals(me.Substring(0, sep), "Steam", StringComparison.OrdinalIgnoreCase);
+                string bare = (sep >= 0 && sep + 1 < me.Length) ? me.Substring(sep + 1) : me;
+
+                foreach (string raw in admins)
+                {
+                    if (string.IsNullOrEmpty(raw)) continue;
+                    string entry = raw.Trim();
+                    if (entry.Length == 0) continue;
+
+                    if (entry.Equals(me, StringComparison.OrdinalIgnoreCase) ||
+                        (steam && entry.Equals(bare, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _adminCache = true;
+                        return true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"TortalPortal: could not read the server's admin list (non-fatal, falling back to ServerSync's answer). Reason: {ex.Message}");
+            }
+
+            return _adminCache;
         }
 
         public static void LogDebug(string msg)

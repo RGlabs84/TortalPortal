@@ -32,8 +32,10 @@ namespace TortalPortal
     {
         // Zones out from the anchor that count as "somebody is here". Deliberately NOT AnchorZoneRing:
         // that dial goes to 2, which is 25 zones, and every one of them would be stocked with monsters
-        // by somebody glancing at a photograph. 1 matches vanilla's own m_activeArea - the ring the
-        // game considers a player to be occupying - and 3x3 zones is already wider than the camera sees.
+        // by somebody glancing at a photograph. 1 was vanilla's pre-1.0 m_activeArea - the ring the
+        // game considered a player to be occupying. On 1.0 that ring is the near simulation distance
+        // (SimulationDistance.OriginalNear = 2, and the player can raise it); this stays at 1 on purpose,
+        // because 3x3 zones is already wider than the camera sees.
         private const int SpawnRing = 1;
 
         private static bool _active;
@@ -118,8 +120,8 @@ namespace TortalPortal
             if (!Configuration.anchoredSpawning.Value) return false;
             if (ZoneSystem.instance == null || Player.m_localPlayer == null) return false;
 
-            Vector2i spawnZone = ZoneSystem.GetZone(system.transform.position);
-            Vector2i anchorZone = ZoneSystem.GetZone(_pos);
+            Vector2s spawnZone = ZoneSystem.GetZone(system.transform.position);
+            Vector2s anchorZone = ZoneSystem.GetZone(_pos);
             return Mathf.Abs(spawnZone.x - anchorZone.x) <= SpawnRing &&
                    Mathf.Abs(spawnZone.y - anchorZone.y) <= SpawnRing;
         }

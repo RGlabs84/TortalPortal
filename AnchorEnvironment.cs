@@ -64,7 +64,7 @@ namespace TortalPortal
         // the selection runs a seeded RNG and walks the biome's weighted table.
         private static EnvSetup _env;
         private static long _envPeriod = long.MinValue;
-        private static Heightmap.Biome _envBiome = Heightmap.Biome.None;
+        private static BiomeSector _envBiome; // 1.0 picks weather per BiomeSector, not per Heightmap.Biome
 
         // Everything the swap touches, captured on the way in and put back on the way out. If any
         // field is added to Apply() it must be added here too, or it leaks into the player's view.
@@ -102,7 +102,7 @@ namespace TortalPortal
                 _envFailed = false;
                 _announced = false;
                 _envPeriod = long.MinValue;
-                _envBiome = Heightmap.Biome.None;
+                _envBiome = null;
                 _env = ResolveEnv(anchorPos);
 
                 if (!_hooked)
@@ -421,9 +421,33 @@ namespace TortalPortal
             // both do it) and matching it is the point - deviating here would hand the anchor a
             // DIFFERENT environment from the one a player standing on that spot gets.
             bool deepnorth = WorldGenerator.IsDeepnorth(pos.x, pos.y);
-            Heightmap.Biome biome = hm.GetBiome(pos, em.m_oceanLevelEnvCheckAshlandsDeepnorth, ashlands || deepnorth);
+
+            // Valheim 1.0 chooses weather per BiomeSector - a contiguous patch of one biome, carrying the
+            // alt-biome environment additions and blocks that GetAvailableEnvironments applies - rather
+            // than per Heightmap.Biome. This is EnvMan.GetBiome's vanilla body transcribed: the sector under
+            // the point, except that in the Ashlands or Deep North at or below the ocean check level vanilla
+            // substitutes that biome's FIRST sector, so open water gets the sea's weather. As in vanilla the
+            // height query's return value is ignored (FindHeightmap already proved the point is inside).
+            if (WorldGenerator.instance == null) return _env;
+            BiomeSector biome = WorldGenerator.instance.GetBiomeSector(pos);
+            if (ashlands || deepnorth)
+            {
+                hm.GetWorldHeight(pos, out float height);
+                if (height <= em.m_oceanLevelEnvCheckAshlandsDeepnorth)
+                {
+                    AltBiomeWorldData worldData = ZNet.World?.m_biomeData;
+                    if (worldData != null
+                        && worldData.Biomes.TryGetValue(ashlands ? Heightmap.Biome.AshLands : Heightmap.Biome.DeepNorth, out BiomeTypeInfo info)
+                        && info.Sectors.Count > 0)
+                    {
+                        biome = info.Sectors[0];
+                    }
+                }
+            }
+            if (biome == null) return _env;
 
             long period = (long)ZNet.instance.GetTimeSeconds() / Math.Max(1L, em.m_environmentDuration);
+            // Reference comparison, exactly as vanilla's own `m_currentBiome == biome` cache check.
             if (period == _envPeriod && biome == _envBiome && _env != null) return _env;
 
             List<EnvEntry> available = em.GetAvailableEnvironments(biome);

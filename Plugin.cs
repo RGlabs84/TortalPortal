@@ -10,7 +10,7 @@ namespace TortalPortal
     {
         public const string PluginGUID = "wubarrk.TortalPortal";
         public const string PluginName = "TortalPortal";
-        public const string PluginVersion = "1.3.1";
+        public const string PluginVersion = "1.6.4";
 
         private readonly Harmony _harmony = new Harmony(PluginGUID);
 
@@ -19,6 +19,8 @@ namespace TortalPortal
             typeof(PlacementPatch),
             typeof(SnapshotAnchor),
             typeof(SectorSubscription),
+            typeof(SnapGuard),
+            typeof(TraderRepair),
             typeof(FilterPatch),
             typeof(PortalBehaviorPatch),
             typeof(SecurityPatch),
@@ -28,7 +30,12 @@ namespace TortalPortal
             typeof(MapInputPatch),
             typeof(ScatterCommand),
             typeof(TortalPinLibrary),
-            typeof(AnchorPresence)
+            typeof(AnchorPresence),
+            typeof(PortalGuard),
+            typeof(PortalLockdown),
+            typeof(CorpseRun),
+            typeof(ConcealedPortals),
+            typeof(PortalHealth)
         };
 
         public static Plugin Instance;
@@ -48,6 +55,8 @@ namespace TortalPortal
 
             ApplyPatches();
             WireLiveVFXSettings();
+            WireRuleAudit();
+            WireSkippedPortals();
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded successfully.");
         }
@@ -69,10 +78,75 @@ namespace TortalPortal
                 // Only the frame tint moves, so the gateway does not need rebuilding - ApplyVFXMode settles
                 // the tint on its own.
                 Configuration.vfxTintPortalFrame.SettingChanged += (s, e) => PortalBehaviorPatch.RefreshLoadedPortals(false);
+                // Monster targeting is set on the live piece, so the dial reaches standing portals the same way.
+                Configuration.selfHealingPortals.SettingChanged += (s, e) => PortalGuard.RefreshLoadedPortals();
             }
             catch (Exception ex)
             {
                 Log.LogError($"TortalPortal: could not hook the live VFX settings - they will only apply on world reload. Reason: {ex}");
+            }
+        }
+
+        // SkipPortalPrefabs reaches gates already standing: a newly skipped gate loses the runic gateway and
+        // the immunity on the spot and gets its vanilla look back, a gate taken off the list gets them again,
+        // and a window open on a gate that has just been handed back closes. Fires on the server's value
+        // arriving too, so the log says what this peer settled on at login.
+        private void WireSkippedPortals()
+        {
+            try
+            {
+                if (SkippedPortals.Any) Log.LogInfo($"TortalPortal: leaving these portal prefabs alone (SkipPortalPrefabs): {SkippedPortals.Describe()}.");
+                Configuration.skipPortalPrefabs.SettingChanged += (s, e) =>
+                {
+                    SkippedPortals.Invalidate();
+                    Log.LogInfo($"TortalPortal: SkipPortalPrefabs is now: {SkippedPortals.Describe()}.");
+                    PortalBehaviorPatch.RefreshLoadedPortals(false);
+                    PortalGuard.RefreshLoadedPortals();
+                    if (PortalUIManager.IsUIVisible() && SkippedPortals.IsSkipped(PortalUIManager.CurrentSourcePortal))
+                    {
+                        PortalUIManager.HideUI();
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"TortalPortal: could not hook SkipPortalPrefabs - a change will only apply on world reload. Reason: {ex}");
+            }
+        }
+
+        // The portal cap, the admin bypass and the switch that decides who owns them are the three settings
+        // a player actually feels, and until 1.4.3 nothing anywhere recorded them moving. They moved plenty:
+        // with no locking entry registered, any client's config file could push its own numbers over the
+        // server's, so a live server's effective cap wandered between values nobody had deliberately set
+        // while the server's own config file went on claiming something else entirely. One line per change
+        // is the entire audit trail that was missing - and it fires on the sync arriving too, so the log
+        // says what this peer settled on at login as well as what changed afterwards.
+        private void WireRuleAudit()
+        {
+            try
+            {
+                Configuration.maxPortalsPerPlayer.SettingChanged += (s, e) => LogRules("MaxPortalsPerPlayer");
+                Configuration.adminBypass.SettingChanged += (s, e) => LogRules("AdminBypass");
+                Configuration.lockConfiguration.SettingChanged += (s, e) => LogRules("LockConfiguration");
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"TortalPortal: could not hook the rule audit - portal cap changes will not be logged. Reason: {ex}");
+            }
+        }
+
+        private static void LogRules(string what)
+        {
+            try
+            {
+                int cap = Configuration.maxPortalsPerPlayer.Value;
+                Log.LogInfo(
+                    $"TortalPortal: {what} settled - portal cap {(cap > 0 ? cap.ToString() : $"unlimited ({cap})")}, " +
+                    $"AdminBypass={Configuration.adminBypass.Value}, LockConfiguration={Configuration.lockConfiguration.Value}.");
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"TortalPortal: could not log the current portal rules (non-fatal). Reason: {ex.Message}");
             }
         }
 

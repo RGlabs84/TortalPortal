@@ -7,6 +7,15 @@ visited. The technique is general: anything you want loaded, simulated, watched,
 every player is elsewhere sits on top of these five mechanisms. Written to be lifted whole into any
 BepInEx/Harmony mod. Redistribute freely — attribution to Wubarrk appreciated, not required.
 
+> **Valheim 1.0.7 note (2026-09-09).** The snippets below predate 1.0 and use the pre-1.0 sector API.
+> On 1.0: sectors are `Vector2s` (not `Vector2i`); `ZDOMan.FindSectorObjects` takes a
+> `SimulationDistance` struct in place of `(int area, int distantArea)` - pass
+> `new SimulationDistance(ring, distantRing, classic: true)` to keep the square-ring sweep described
+> here (the non-classic sweep trims each ring to a disc); `ZoneSystem.m_activeArea` /
+> `m_activeDistantArea` are gone, read `ZNet.instance.GetSyncedSimulationDistance().Near/FarSimulationDistance`
+> (or a peer's `ZNetPeer.m_simulationDistance` on the server); `PokeLocalZone`, `IsZoneGenerated` and
+> `SpawnZone` are private (publicize). The mod's `ZoneCompat.cs` is the working 1.0 form of all of this.
+
 Verified against the live Valheim build as of **August 2026**, using
 `BepInEx.AssemblyPublicizer.MSBuild` on `assembly_valheim` (every "private" member named below is
 called directly through publicizing, not reflection). Method names can drift across game patches —

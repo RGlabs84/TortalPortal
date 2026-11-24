@@ -29,7 +29,14 @@ namespace TortalPortal
         //   1 = the 1.0.1 layout. Nothing was renamed between the two - PortalIndexRefreshSeconds and
         //       MenuOpenDistance were added, and BepInEx fills new keys in from their defaults on its own -
         //       so this step only stamps the file. The machinery is what matters from here on.
-        public const int CurrentConfigVersion = 1;
+        //   2 = the 1.5.3 layout. CorpseRunTtlMinutes was split in two: it had been setting both how long a
+        //       corpse gate stands and how old an unreported grave may be to still earn one, and the 30-minute
+        //       default was wrong for the first job. Its value carries over to CorpseRunMaxGraveAgeMinutes,
+        //       which is the half that kept its meaning; CorpseRunGateTtlMinutes takes the new default of 0
+        //       (no limit). Worth a real move rather than letting the orphan be swept away silently: a tester
+        //       who had raised the old dial to four hours meant it, and that intent belongs on the grave-age
+        //       key rather than being discarded.
+        public const int CurrentConfigVersion = 2;
 
         public sealed class Move
         {
@@ -45,7 +52,17 @@ namespace TortalPortal
         // Keyed by the version the moves produce: Moves[n] takes a file at version n-1 up to version n.
         private static readonly Dictionary<int, Move[]> Moves = new Dictionary<int, Move[]>
         {
-            { 1, new Move[0] }
+            { 1, new Move[0] },
+            {
+                2, new[]
+                {
+                    new Move
+                    {
+                        FromSection = "6 - Corpse Run", FromKey = "CorpseRunTtlMinutes",
+                        ToSection = "6 - Corpse Run", ToKey = "CorpseRunMaxGraveAgeMinutes",
+                    },
+                }
+            }
         };
 
         // Raw "Section::Key" -> serialized value, read off disk before anything was bound.

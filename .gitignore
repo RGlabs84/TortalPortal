@@ -13,3 +13,6 @@
 
 # Left behind when a HexiumDist package gets unpacked in place - the zip beside it is the artifact
 HexiumDist/TortalPortal-v*/
+
+# Python bytecode from the README forge (readme_gen.py)
+__pycache__/

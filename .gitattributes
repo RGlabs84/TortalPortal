@@ -1,0 +1,14 @@
+# This repo is authored on Linux and stored with LF endings.
+#
+# Without this file a Windows checkout silently rewrites every text file to CRLF, and the next commit
+# from that machine reads as a whole-tree rewrite: before 1.4.0 the working tree carried 33 files
+# whose only difference from HEAD was carriage returns, turning a 146-line release into a 12,900-line
+# diff and flattening git blame across the project.
+* text=auto eol=lf
+
+# Belt and braces for the formats git would otherwise have to sniff for itself. A false "text" guess
+# on any of these corrupts the file rather than reformatting it.
+*.png  binary
+*.dll  binary
+*.zip  binary
+*.blob binary

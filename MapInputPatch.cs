@@ -57,19 +57,26 @@ namespace TortalPortal
             }
         }
 
-        [HarmonyPatch(typeof(Minimap), nameof(Minimap.OnMapRightClick))]
+        // Vanilla 1.0 deleted Minimap.OnMapRightClick and moved its body into the private
+        // RemovePinUnderPointer(), which Start() now reaches through an anonymous delegate on m_onRightClick.
+        // The compiler-generated delegate has no stable name, so the real method is the patch site. It has
+        // TWO callers since 1.0.7 - that right-click delegate and TouchLongPressPerformed() - so this guard
+        // also stops a touch long-press deleting a pin under the portal window. That is the same "the
+        // pointer is over our UI" case and is covered deliberately. A string rather than nameof: the member
+        // is private, and the string keeps the patch honest about targeting something that could move again.
+        [HarmonyPatch(typeof(Minimap), "RemovePinUnderPointer")]
         [HarmonyPrefix]
-        public static bool Minimap_OnMapRightClick_Prefix()
+        public static bool Minimap_RemovePinUnderPointer_Prefix()
         {
             try
             {
-                // Right-click removes pins in vanilla; through the window that deleted whatever pin happened
-                // to sit under the portal list.
+                // Right-click (or long-press) removes pins in vanilla; through the window that deleted
+                // whatever pin happened to sit under the portal list.
                 return !PortalUIManager.IsPointerOverWindow();
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogError($"TortalPortal: {nameof(Minimap_OnMapRightClick_Prefix)} failed (non-fatal). Reason: {ex}");
+                Plugin.Log.LogError($"TortalPortal: {nameof(Minimap_RemovePinUnderPointer_Prefix)} failed (non-fatal). Reason: {ex}");
                 return true;
             }
         }
@@ -140,8 +147,12 @@ namespace TortalPortal
                 if (PortalUIManager.IsPointerOverWindow()) return false;
                 if (!PortalUIManager.IsSelectUIVisible()) return true;
 
-                Vector3 world = __instance.ScreenToWorldPoint(ZInput.mousePosition);
-                float radius = __instance.m_removeRadius * (__instance.m_largeZoom * 2f);
+                // 1.0: ZInput.mousePosition became pointerPosition (mouse, or the primary touch), and the
+                // radius vanilla hit-tests its own pins with is the private PinInteractRadius property - the
+                // old m_removeRadius * (m_largeZoom * 2f) plus a touch allowance. Reading that property
+                // keeps a marker hit exactly where vanilla would hit a pin.
+                Vector3 world = __instance.ScreenToWorldPoint(ZInput.pointerPosition);
+                float radius = __instance.PinInteractRadius;
 
                 // True when the click landed on one of our markers and was acted on - in which case
                 // vanilla's pin-toggle must not also run on the same click.
@@ -170,8 +181,9 @@ namespace TortalPortal
 
                 // Click-then-click-to-travel arrives as a double click, and vanilla answers those by opening
                 // its pin-name box. Near one of our markers, that box is never what the player meant.
-                Vector3 world = __instance.ScreenToWorldPoint(ZInput.mousePosition);
-                float radius = __instance.m_removeRadius * (__instance.m_largeZoom * 2f);
+                // Same pointer and radius as OnMapLeftClick above - vanilla's own 1.0 pin lookup.
+                Vector3 world = __instance.ScreenToWorldPoint(ZInput.pointerPosition);
+                float radius = __instance.PinInteractRadius;
                 return !PortalUIManager.HasEntryNear(world, radius);
             }
             catch (Exception ex)
