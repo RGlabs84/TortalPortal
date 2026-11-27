@@ -1,15 +1,16 @@
 <!-- CHECKPOINT -->
-- **Updated:** 2026-11-23 (session with the owner)
-- **Current task:** 1.6.3 = `SkipPortalPrefabs` (leave other mods' portals alone) + README schema v3.1 + matching PDB. Built, server-tested, folded. NOT published, NOT committed.
-- **Next step:** owner reviews `HexiumDist/README.md` and the CHANGELOG entry; when he says "hex web", upload `HexiumDist/TortalPortal-v1.6.3-hexium.zip` (sha256 53145509...). Then a real-client check at a modded portal listed in SkipPortalPrefabs (window must NOT open, the portal's own behaviour must work).
-- **Blocked on:** owner go for publishing; a client playtest.
-- **Files in progress:** none (all saved). This local copy (`~/WubarrkCODING/TortalPortal`) is AHEAD of TheWall's `ValheimMods/TortalPortal`; the owner does the backup.
-- **Open questions for the owner:** sync floor kept at 1.5.0 (a 1.6.2 client still takes a skipped gate over for itself only); raise to 1.6.3 instead?
+- **Updated:** 2026-11-27 (session with the owner)
+- **Current task:** 1.6.5 PUBLISHED (owner: "approved to pub on all"): Thunderstore + Hexium `Wubarrk-TortalPortal-1.6.5` (Hexium upload id 562), GitHub RGlabs84/TortalPortal release/v1.6.5 PR + tag + release v1.6.5. One zip everywhere (sha256 3c990f23...). 1.6.5 = the grave ward (CorpseWard.cs, `CorpseRunArrivalWardSeconds` synced, default 20, 0 = off, ends on a swing) + corpse gate no longer latches dead inside vanilla's 2 s teleport cooldown.
+- **Tested:** client autotest (tools/tortal-autotest, single-player 1.0.31) PASS 39 of 39, 0 error lines (~/valheim-testbed/autotest-tortal/results-20261127-082217). Rerun: `~/valheim-testbed/heavy.sh 10G tortal-client tools/tortal-autotest/run-autotest.sh`.
+- **Next step:** none required. If a store API still shows 1.6.4, re-read `latest` a few minutes later (both lag an upload).
+- **Blocked on:** nothing.
+- **Files in progress:** none. This local copy is ahead of TheWall's; the owner does the backup.
+- **Open questions for the owner:** four stray files still uncommitted on purpose (Prefabs.zip, odinmount.blob, valtima.jpeg, addIcon.png).
 <!-- /CHECKPOINT -->
 
 # TortalPortal status
 
-- 1.6.3 checks: Release build 0 errors / 0 warnings; pdb_match PASS (no home path); fold PASS (15 entries, DLL a0b2f228..., PDB 2f60bd0f...);
+- 1.6.4 checks (code identical to the tested 1.6.3-numbered build; the 1.6.4 rebuild was NOT re-tested, owner said skip): Release build 0 errors / 0 warnings; pdb_match PASS (no home path); fold PASS (15 entries, DLL a0b2f228..., PDB 2f60bd0f...);
   forge PASS (36 of 36 badges 200); Thunderstore render 36 of 36 images, 14 of 14 details, URLs identical; screenshots looked at.
 - Server test (Linux 1.0.21 dedicated, 121-portal world, export total_portals): 5 of 5 PASS, 0 errors. Script: ~/valheim-testbed is the rig
   (profile-tortal-skip, saves-tortal-skip are throwaway copies).

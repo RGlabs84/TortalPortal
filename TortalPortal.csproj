@@ -4,7 +4,7 @@
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>TortalPortal</AssemblyName>
     <Description>Total Portal Control System for Valheim</Description>
-    <Version>1.6.4</Version>
+    <Version>1.6.5</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>TortalPortal</RootNamespace>
@@ -18,6 +18,11 @@
     <EnableSourceLink>false</EnableSourceLink>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The in-game test driver lives under tools/ and never ships. -->
+    <Compile Remove="tools/**" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />

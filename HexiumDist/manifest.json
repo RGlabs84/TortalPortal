@@ -1,6 +1,6 @@
 {
     "name": "TortalPortal",
-    "version_number": "1.6.4",
+    "version_number": "1.6.5",
     "website_url": "https://ravenirongames.com/",
     "description": "Total Portal Control System for Valheim. Pick destinations from a map UI listing biome, distance, and owner. Features destination photos, PIN locks, tame teleportation, travel filters, and a procedural runic gateway.",
     "dependencies": [

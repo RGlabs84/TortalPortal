@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- TortalAutoTest: the unattended in-game test driver for TortalPortal. Never ships (TortalPortal.csproj excludes tools/**).
+       Ported from ThunderFeet's tools/thunderfeet-autotest (itself from Runic's and Better Continents' drivers).
+       Build (always through the RAM gate):
+         ~/valheim-testbed/heavy.sh 4G tortal-autotest dotnet build tools/tortal-autotest/TortalAutoTest.csproj -c Release
+       Output: tools/tortal-autotest/bin/TortalAutoTest.dll -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>TortalAutoTest</AssemblyName>
+    <RootNamespace>TortalAutoTest</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Deterministic>true</Deterministic>
+    <DebugType>portable</DebugType>
+    <OutputPath>bin/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <NoWarn>$(NoWarn);CS0618;CS0649;CS8632;CS0436</NoWarn>
+    <LibsTools Condition="'$(LibsTools)' == '' And Exists('$(MSBuildProjectDirectory)/../../../libs-Tools/assembly_valheim.dll')">$(MSBuildProjectDirectory)/../../../libs-Tools</LibsTools>
+    <LibsTools Condition="'$(LibsTools)' == ''">$(HOME)/WubarrkCODING/libs-Tools</LibsTools>
+    <ModDll Condition="'$(ModDll)' == ''">$(MSBuildProjectDirectory)/../../bin/Release/net48/TortalPortal.dll</ModDll>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- TortalPortal itself, publicized: the driver reads CorpseWard / CorpseRun / Configuration directly. -->
+    <Reference Include="TortalPortal"><HintPath>$(ModDll)</HintPath><Publicize>true</Publicize><Private>false</Private></Reference>
+    <Reference Include="assembly_valheim"><HintPath>$(LibsTools)/assembly_valheim.dll</HintPath><Publicize>true</Publicize><Private>false</Private></Reference>
+    <Reference Include="assembly_utils"><HintPath>$(LibsTools)/assembly_utils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_guiutils"><HintPath>$(LibsTools)/assembly_guiutils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Splatform"><HintPath>$(LibsTools)/Splatform.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>$(LibsTools)/BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(LibsTools)/0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="netstandard"><HintPath>$(LibsTools)/netstandard.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(LibsTools)/UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(LibsTools)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(LibsTools)/UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(LibsTools)/UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(LibsTools)/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(LibsTools)/Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

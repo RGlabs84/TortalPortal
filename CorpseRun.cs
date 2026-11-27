@@ -995,6 +995,7 @@ namespace TortalPortal
                     return false;
                 }
                 Game.instance.IncrementPlayerStat(PlayerStatType.PortalsUsed);
+                CorpseWard.OnTripStarted();
                 Configuration.LogDebug($"Corpse run: travelling to the grave gate at {pos}.");
                 return true;
             }
