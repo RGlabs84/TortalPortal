@@ -382,10 +382,14 @@ namespace TortalPortal
                 {
                     if (localPlayerInRange && canTeleport)
                     {
-                        if (_autoOpenedFor != __instance && CorpseRun.IsOrigin(zdo) && CorpseRun.IsMine(zdo))
+                        // Latched only once a trip has really started. Vanilla refuses TeleportTo for 2 s after
+                        // any teleport or a fresh spawn, and a player who respawns at the bed and reaches the gate
+                        // inside that window used to latch a refused trip: the gate then stood dead until they
+                        // walked off and came back. Unlatched, it simply tries again next frame.
+                        if (_autoOpenedFor != __instance && CorpseRun.IsOrigin(zdo) && CorpseRun.IsMine(zdo)
+                            && CorpseRun.TravelToGrave(__instance))
                         {
                             _autoOpenedFor = __instance;
-                            CorpseRun.TravelToGrave(__instance);
                         }
                     }
                     else if (!localPlayerInRange && _autoOpenedFor == __instance)

@@ -3,7 +3,7 @@
 # 🌀 TortalPortal
 
 ![ᚱ TORTALPORTAL · EVERY GATE ON ONE MAP](https://img.shields.io/badge/TORTALPORTAL-EVERY_GATE_ON_ONE_MAP-15803d?style=for-the-badge&labelColor=1b1b1b&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDEyIDE2Ij48cGF0aCBkPSJNMyAxM1YxTDggNEwzIDdMOCAxMyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjN2ViOTk0IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8%2BPC9zdmc%2B)
-![VERSION · 1.6.4](https://img.shields.io/badge/VERSION-1.6.4-8b1e1e?style=for-the-badge&labelColor=1b1b1b)
+![VERSION · 1.6.5](https://img.shields.io/badge/VERSION-1.6.5-8b1e1e?style=for-the-badge&labelColor=1b1b1b)
 ![CLIENT + SERVER · SERVER-SYNCED](https://img.shields.io/badge/CLIENT_%2B_SERVER-SERVER--SYNCED-1f4e79?style=for-the-badge&labelColor=1b1b1b)
 
 | 🗺️ **Every gate** | 📸 **Photos** | 💀 **Corpse run** | 🛡️ **Unbreakable** |
@@ -20,18 +20,18 @@ Die, and a private gate to your grave waits by your bed. Lock your gates with a 
 
 ---
 
-![ᛞ NEW IN 1.6.4 · LEAVE OTHER GATES BE](https://img.shields.io/badge/NEW_IN_1.6.4-LEAVE_OTHER_GATES_BE-8b1e1e?style=for-the-badge&labelColor=1b1b1b&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDEyIDE2Ij48cGF0aCBkPSJNMSAyVjEyTDkgMlYxMkwxIDIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2JmODM4MyIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg%3D%3D)
+![ᛞ NEW IN 1.6.5 · THE GRAVE WARD](https://img.shields.io/badge/NEW_IN_1.6.5-THE_GRAVE_WARD-8b1e1e?style=for-the-badge&labelColor=1b1b1b&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDEyIDE2Ij48cGF0aCBkPSJNMSAyVjEyTDkgMlYxMkwxIDIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2JmODM4MyIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg%3D%3D)
 
-**Portals from other mods keep working their own way. List them, and TortalPortal leaves them alone.**
+**Step out of your corpse gate and nothing can hurt you for a few seconds. Gear up before what killed you gets a second go.**
 
 | You | It |
 |---|---|
-| **run a mod with its own portals** (one-way gates, dungeon or instance portals, gates with their own menu) | put their prefab names in `SkipPortalPrefabs`, comma-separated |
-| **have a whole family of them** | `*` matches anything: `MWL_*` covers every one of them; names are not case-sensitive |
-| **walk up to a listed gate** | it behaves exactly as it would without TortalPortal: no window, vanilla tags, its own look |
-| **look at your destination list** | listed gates never appear there, on the map, in the export or against anyone's portal cap |
+| **land at your grave** through your corpse gate | you cannot be hurt for `CorpseRunArrivalWardSeconds` (20 s by default); a banner says so |
+| **are still in the loading screen** | the clock has not started: it counts from the moment you stand on the ground |
+| **swing a weapon** | the ward ends at once: it covers a gear-up, not a fight |
+| **run a server that wants it gone** | set `CorpseRunArrivalWardSeconds` to 0 |
 
-🔹 **Also:** the package now ships `TortalPortal.pdb`, so an error in your log names the file and line.
+🔹 **Last time (1.6.4):** `SkipPortalPrefabs` hands other mods' portals back to them.
 
 ---
 
@@ -135,6 +135,7 @@ Built on the game's own mount interface, so custom saddles and modded mounts rid
 |---|---|
 | 💀 **die** | the server raises a gate beside your bed (or the start temple) leading straight to your tombstone |
 | 🚶 **walk up to it** | you are sent through; nobody else can use it or open a window on it |
+| 🛡️ **step out at the grave** | the grave ward keeps you from harm for 20 s (or until you swing), so what killed you cannot do it twice |
 | ⚰️ **empty your grave** | both ends close; it is one way by design, so there is no free trip home |
 | 🌊 **died at sea or in a dungeon** | the grave gate floats on the water, or opens at the dungeon's entrance |
 
@@ -228,7 +229,7 @@ Built on the game's own mount interface, so custom saddles and modded mounts rid
 | `VFXWakeDistance` | **25** | 2 – 50 | 🖥️ |
 
 <details>
-<summary>📜 <b>The whole ledger</b> — all 28 numeric dials, by section</summary>
+<summary>📜 <b>The whole ledger</b> — all 29 numeric dials, by section</summary>
 
 | Dial | Default | Range | Side |
 |---|---|---|---|
@@ -250,6 +251,7 @@ Built on the game's own mount interface, so custom saddles and modded mounts rid
 | `VFXOrbHeightOffset` | **0** | — | 🖥️ |
 | `VFXSwirlDensity` | **3** | 0.25 – 3 | 🖥️ |
 | `VFXWakeDistance` | **25** | 2 – 50 | 🖥️ |
+| `CorpseRunArrivalWardSeconds` | **20** | 0 – 60 | 🔒 |
 | `CorpseRunBedOffsetMeters` | **3** | 1 – 20 | 🔒 |
 | `CorpseRunClearanceMeters` | **10** | 1 – 30 | 🔒 |
 | `CorpseRunGateTtlMinutes` | **no limit** | 0 – 1440 | 🔒 |
@@ -348,7 +350,7 @@ Typed at the server console they run there; typed in a client console they go to
 
 ![ᛚ SETTINGS · CONFIGURATION MANAGER · F1](https://img.shields.io/badge/SETTINGS-CONFIGURATION_MANAGER_%C2%B7_F1-b8860b?style=for-the-badge&labelColor=1b1b1b&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDEyIDE2Ij48cGF0aCBkPSJNMyAxM1YxTDggNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDdiYzc4IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8%2BPC9zdmc%2B)
 
-65 settings: 38 🔒 server-synced, 27 🖥️ local, in `wubarrk.TortalPortal.cfg`. Your settings are carried across updates when the file changes shape, with a backup beside it.
+66 settings: 39 🔒 server-synced, 27 🖥️ local, in `wubarrk.TortalPortal.cfg`. Your settings are carried across updates when the file changes shape, with a backup beside it.
 
 <details>
 <summary>🔒 <b>Server-synced</b> — set on the server, locked to admins</summary>
@@ -360,7 +362,7 @@ Typed at the server console they run there; typed in a client console they go to
 | 3 Features: travel | `AllowTames` · `TameFollowRadius` · `AllowMountedTeleport` · `MenuOpenDistance` · `MenuVerticalDistance` · `PortalIndexRefreshSeconds` |
 | 3 Features: pictures | `EnablePortalCameraShot` · `SnapshotRefreshIntervalMinutes` · `EnableRemoteSnapshots` · `EnableLivePreviews` · `CameraResolution` · `AnchoredEnvironment` · `AnchoredSpawning` · `AnchorZoneRing` · `AnchorSettleBudgetSeconds` · `AnchorSettleRadius` |
 | 3 Features: world | `EnableCustomVFX` · `RepairSunkenTraders` · `ShareIconsFromServer` · `SelfHealingPortals` |
-| 6 Corpse Run | `EnableCorpseRun` · `CorpseRunGateTtlMinutes` · `CorpseRunMaxGraveAgeMinutes` · `CorpseRunClearanceMeters` · `CorpseRunMinRoomMeters` · `CorpseRunSearchRadiusMeters` · `CorpseRunGraveOffsetMeters` · `CorpseRunBedOffsetMeters` |
+| 6 Corpse Run | `EnableCorpseRun` · `CorpseRunGateTtlMinutes` · `CorpseRunMaxGraveAgeMinutes` · `CorpseRunClearanceMeters` · `CorpseRunMinRoomMeters` · `CorpseRunSearchRadiusMeters` · `CorpseRunGraveOffsetMeters` · `CorpseRunBedOffsetMeters` · `CorpseRunArrivalWardSeconds` |
 | 8 Concealed Gates | `EnableConcealedPortals` · `ConcealedDiscoveryShared` |
 
 </details>

@@ -23,18 +23,18 @@ Die, and a private gate to your grave waits by your bed. Lock your gates with a 
 
 ---
 
-{{rune ᛞ | NEW IN {{version}} | LEAVE OTHER GATES BE | 8b1e1e}}
+{{rune ᛞ | NEW IN {{version}} | THE GRAVE WARD | 8b1e1e}}
 
-**Portals from other mods keep working their own way. List them, and TortalPortal leaves them alone.**
+**Step out of your corpse gate and nothing can hurt you for a few seconds. Gear up before what killed you gets a second go.**
 
 | You | It |
 |---|---|
-| **run a mod with its own portals** (one-way gates, dungeon or instance portals, gates with their own menu) | put their prefab names in {{key SkipPortalPrefabs}}, comma-separated |
-| **have a whole family of them** | `*` matches anything: `MWL_*` covers every one of them; names are not case-sensitive |
-| **walk up to a listed gate** | it behaves exactly as it would without TortalPortal: no window, vanilla tags, its own look |
-| **look at your destination list** | listed gates never appear there, on the map, in the export or against anyone's portal cap |
+| **land at your grave** through your corpse gate | you cannot be hurt for {{key CorpseRunArrivalWardSeconds}} (20 s by default); a banner says so |
+| **are still in the loading screen** | the clock has not started: it counts from the moment you stand on the ground |
+| **swing a weapon** | the ward ends at once: it covers a gear-up, not a fight |
+| **run a server that wants it gone** | set {{key CorpseRunArrivalWardSeconds}} to 0 |
 
-🔹 **Also:** the package now ships `TortalPortal.pdb`, so an error in your log names the file and line.
+🔹 **Last time (1.6.4):** {{key SkipPortalPrefabs}} hands other mods' portals back to them.
 
 ---
 
@@ -138,6 +138,7 @@ Built on the game's own mount interface, so custom saddles and modded mounts rid
 |---|---|
 | 💀 **die** | the server raises a gate beside your bed (or the start temple) leading straight to your tombstone |
 | 🚶 **walk up to it** | you are sent through; nobody else can use it or open a window on it |
+| 🛡️ **step out at the grave** | the grave ward keeps you from harm for 20 s (or until you swing), so what killed you cannot do it twice |
 | ⚰️ **empty your grave** | both ends close; it is one way by design, so there is no free trip home |
 | 🌊 **died at sea or in a dungeon** | the grave gate floats on the water, or opens at the dungeon's entrance |
 
@@ -318,7 +319,7 @@ Typed at the server console they run there; typed in a client console they go to
 | 3 Features: travel | {{key AllowTames}} · {{key TameFollowRadius}} · {{key AllowMountedTeleport}} · {{key MenuOpenDistance}} · {{key MenuVerticalDistance}} · {{key PortalIndexRefreshSeconds}} |
 | 3 Features: pictures | {{key EnablePortalCameraShot}} · {{key SnapshotRefreshIntervalMinutes}} · {{key EnableRemoteSnapshots}} · {{key EnableLivePreviews}} · {{key CameraResolution}} · {{key AnchoredEnvironment}} · {{key AnchoredSpawning}} · {{key AnchorZoneRing}} · {{key AnchorSettleBudgetSeconds}} · {{key AnchorSettleRadius}} |
 | 3 Features: world | {{key EnableCustomVFX}} · {{key RepairSunkenTraders}} · {{key ShareIconsFromServer}} · {{key SelfHealingPortals}} |
-| 6 Corpse Run | {{key EnableCorpseRun}} · {{key CorpseRunGateTtlMinutes}} · {{key CorpseRunMaxGraveAgeMinutes}} · {{key CorpseRunClearanceMeters}} · {{key CorpseRunMinRoomMeters}} · {{key CorpseRunSearchRadiusMeters}} · {{key CorpseRunGraveOffsetMeters}} · {{key CorpseRunBedOffsetMeters}} |
+| 6 Corpse Run | {{key EnableCorpseRun}} · {{key CorpseRunGateTtlMinutes}} · {{key CorpseRunMaxGraveAgeMinutes}} · {{key CorpseRunClearanceMeters}} · {{key CorpseRunMinRoomMeters}} · {{key CorpseRunSearchRadiusMeters}} · {{key CorpseRunGraveOffsetMeters}} · {{key CorpseRunBedOffsetMeters}} · {{key CorpseRunArrivalWardSeconds}} |
 | 8 Concealed Gates | {{key EnableConcealedPortals}} · {{key ConcealedDiscoveryShared}} |
 
 </details>

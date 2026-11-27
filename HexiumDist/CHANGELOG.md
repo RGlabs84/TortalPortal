@@ -1,5 +1,19 @@
 # Changelog - TortalPortal
 
+## [1.6.5] — 2026-11-27
+
+*No floor change: `MinimumRequiredVersion` stays at **1.5.0**. The ward runs on each player's own client; a client below 1.6.5 simply gets no ward, and the new setting is one more synced float.*
+
+### 🛡️ The grave ward
+- **Added:** **`CorpseRunArrivalWardSeconds`** (synced, `6 - Corpse Run`, default **20**, 0 to 60): after a player steps through their own corpse gate, they cannot be hurt for that many seconds once they land at the grave. 0 turns it off.
+- **Counts from landing, not from stepping in.** A corpse trip is a distant teleport and can sit in the loading screen for several seconds; vanilla already keeps a teleporting player safe, so the clock waits for the player to stand on the ground.
+- **Refuses every hit**: blows, arrows, fall damage, burning, poison and drowning, and the stagger that comes with them. It is applied where vanilla applies damage to a player, on that player's own client.
+- **Ends early on a swing**, so it covers picking up your gear and not a free round against what killed you. A banner announces it and a line says when it fades; a death or respawn never carries it over.
+
+### 🩹 Fixed
+- **A corpse gate reached within 2 s of respawning (or of any teleport) no longer goes dead.** The game refuses a teleport for 2 s after the last one, and the gate counted that refused trip as used, so it did nothing until you walked away and came back. It now tries again until the trip starts. Found by the new in-game test.
+- Checked in a single-player Valheim 1.0.31 client run: die 250 m out, respawn, through the gate, ward up 20 s, a hit refused, still up at 18 s, gone at 21 s, hits land; a swing ends it; 0 turns it off.
+
 ## [1.6.4] — 2026-11-23
 
 *No floor change: `MinimumRequiredVersion` stays at **1.5.0**. The server leaves skipped gates out of the destination index, so even a 1.6.2 client is never offered one, and nothing on the wire changed shape; the new setting is one more synced string. A client below 1.6.4 still takes a skipped gate over for itself when it walks up to one, which affects only that player.*

@@ -48,7 +48,10 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.6.4",
+            CurrentVersion = "1.6.5",
+            // NO floor change for 1.6.5, which adds the grave ward (CorpseRunArrivalWardSeconds). The ward runs
+            // entirely on the arriving player's own client; an older client gets no ward and reads the new synced
+            // float as an unknown entry. Nothing on the wire changed shape.
             // NO floor change for 1.6.4, which adds SkipPortalPrefabs. The server builds the destination index
             // and leaves skipped gates out of it, so even a 1.6.2 client is never offered one as a destination
             // and nothing on the wire changed shape - the new setting is one more synced string, which an older
@@ -220,6 +223,7 @@ namespace TortalPortal
         public static ConfigEntry<float> corpseRunSearchRadiusMeters;
         public static ConfigEntry<float> corpseRunGraveOffsetMeters;
         public static ConfigEntry<float> corpseRunBedOffsetMeters;
+        public static ConfigEntry<float> corpseRunArrivalWardSeconds;
         public static ConfigEntry<bool> enableConcealedPortals;
         public static ConfigEntry<bool> concealedDiscoveryShared;
         public static ConfigEntry<float> healthScanIntervalSeconds;
@@ -351,6 +355,8 @@ namespace TortalPortal
                 new ConfigDescription("Minimum distance from the tombstone at which the grave-side gate may stand.", new AcceptableValueRange<float>(1f, 20f)));
             corpseRunBedOffsetMeters = config.Bind("6 - Corpse Run", "CorpseRunBedOffsetMeters", 3f,
                 new ConfigDescription("Minimum distance from the bed (or the start temple) at which the bed-side gate may stand.", new AcceptableValueRange<float>(1f, 20f)));
+            corpseRunArrivalWardSeconds = config.Bind("6 - Corpse Run", "CorpseRunArrivalWardSeconds", 20f,
+                new ConfigDescription("The grave ward: how many seconds a player who steps through their own corpse gate cannot be hurt after landing at the grave, so whatever killed them does not kill them again while they gear up. The clock starts when the trip lands, not when it begins, and the ward ends early the moment the player attacks. 0 turns it off.", new AcceptableValueRange<float>(0f, 60f)));
 
             enableConcealedPortals = config.Bind("8 - Concealed Gates", "EnableConcealedPortals", true,
                 "Server only, and on by default - it does nothing at all until an admin seeds a world with tortal_scatterconcealed. A concealed gate is a real portal standing in the wilderness that is deliberately kept out of the published portal index, so no client is sent its position, its name, or the fact that it exists: it appears in nobody's destination list and on nobody's map until a player walks up to it and presses E, at which point the server hands that one gate to that one player. Turning this off leaves any gates already standing where they are and simply stops them being discovered or handed out - they do not become visible, and tortal_concealedclear is how you actually get rid of them.");
@@ -497,6 +503,7 @@ namespace TortalPortal
             configSync.AddConfigEntry(corpseRunSearchRadiusMeters);
             configSync.AddConfigEntry(corpseRunGraveOffsetMeters);
             configSync.AddConfigEntry(corpseRunBedOffsetMeters);
+            configSync.AddConfigEntry(corpseRunArrivalWardSeconds);
             // Synced so a client can tell whether the server runs concealed gates at all, and under which rule.
             // Without it, a client's own file could decide to stop asking for reveals on a server that offers
             // them, or to keep asking on one that does not.
