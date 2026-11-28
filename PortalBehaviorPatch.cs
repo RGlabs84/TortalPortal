@@ -13,6 +13,12 @@ namespace TortalPortal
         // keeps "only auto-open once per approach" scoped to the portal actually being approached.
         private static TeleportWorld _autoOpenedFor;
 
+        // 1.6.6: the gate a "you can't teleport with these" notice was last shown at. A player carrying ore or
+        // metal used to walk up, get no menu and no word, and conclude portals were broken; vanilla's own
+        // $msg_noteleport only fires from TeleportWorld.Teleport, which this mod's menu replaces. Shown once per
+        // approach (cleared on leaving range, like _autoOpenedFor), so standing at the gate does not spam it.
+        private static TeleportWorld _blockedNoticeFor;
+
         // The portal the player has just arrived through. Every loaded portal ticks UpdatePortal, so the
         // destination sees the player standing well inside its activation range the moment the trip finishes
         // and would throw the menu straight back up - which read as the menu never having closed at all.
@@ -373,6 +379,23 @@ namespace TortalPortal
 
                 ZDO zdo = nview.GetZDO();
                 ZDOID portalId = zdo.m_uid;
+
+                // 1.6.6: say WHY nothing opens. Never at a concealed gate nobody has found - the notice would
+                // give the gate away.
+                if (localPlayerInRange && !canTeleport)
+                {
+                    // A corpse gate only ever sends its owner from the bed side, so only there is the notice true.
+                    bool corpseGateNotMine = CorpseRun.IsCorpseGate(zdo) && !(CorpseRun.IsOrigin(zdo) && CorpseRun.IsMine(zdo));
+                    if (_blockedNoticeFor != __instance && !corpseGateNotMine && !ConcealedPortals.IsUndiscoveredHere(zdo))
+                    {
+                        _blockedNoticeFor = __instance;
+                        BlockedItemsNotice.Show(local, __instance);
+                    }
+                }
+                else if (_blockedNoticeFor == __instance)
+                {
+                    _blockedNoticeFor = null;
+                }
 
                 // A corpse gate has no menu at either end. The owner walking up to the bed side is sent
                 // straight through, once per approach - the same once-per-approach rule the menu uses, on the

@@ -1,5 +1,14 @@
 # Changelog - TortalPortal
 
+## [1.6.6] — 2026-11-27
+
+*No floor change: `MinimumRequiredVersion` stays at **1.5.0**. The notice is shown by each player's own client; nothing on the wire changed.*
+
+### 📢 The gate tells you why
+- **Added:** walking up to a portal while carrying something that may not travel now shows a centre-screen notice naming the items (up to four, then "and N more"): *You can't teleport with: Copper Ore, Tin Ore. Store or drop them to use the portal.* Until now the destination window simply did not open, which read as a broken portal. Vanilla's own "can't teleport" message only fires from the walk-in trigger this mod's window replaces.
+- The names follow the same rules as the gate: vanilla's metal and ore ban (and its hard block that no setting lifts), the portal's own allow-all flag, the `TeleportAll` world key, and the server's `FilterMode` whitelist and blacklist.
+- Shown once per walk-up, cleared when you step away. Never at a concealed gate nobody has found, and on a corpse gate only to its owner at the bed end.
+
 ## [1.6.5] — 2026-11-27
 
 *No floor change: `MinimumRequiredVersion` stays at **1.5.0**. The ward runs on each player's own client; a client below 1.6.5 simply gets no ward, and the new setting is one more synced float.*

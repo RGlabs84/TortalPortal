@@ -48,7 +48,8 @@ namespace TortalPortal
         public static ConfigSync configSync = new ConfigSync("wubarrk.TortalPortal")
         {
             DisplayName = "Total Portal Control System",
-            CurrentVersion = "1.6.5",
+            CurrentVersion = "1.6.6",
+            // NO floor change for 1.6.6 either: the can't-teleport notice is client-only text, nothing on the wire.
             // NO floor change for 1.6.5, which adds the grave ward (CorpseRunArrivalWardSeconds). The ward runs
             // entirely on the arriving player's own client; an older client gets no ward and reads the new synced
             // float as an unknown entry. Nothing on the wire changed shape.
