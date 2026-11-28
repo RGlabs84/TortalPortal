@@ -3,7 +3,7 @@
 # 🌀 TortalPortal
 
 ![ᚱ TORTALPORTAL · EVERY GATE ON ONE MAP](https://img.shields.io/badge/TORTALPORTAL-EVERY_GATE_ON_ONE_MAP-15803d?style=for-the-badge&labelColor=1b1b1b&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDEyIDE2Ij48cGF0aCBkPSJNMyAxM1YxTDggNEwzIDdMOCAxMyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjN2ViOTk0IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8%2BPC9zdmc%2B)
-![VERSION · 1.6.5](https://img.shields.io/badge/VERSION-1.6.5-8b1e1e?style=for-the-badge&labelColor=1b1b1b)
+![VERSION · 1.6.6](https://img.shields.io/badge/VERSION-1.6.6-8b1e1e?style=for-the-badge&labelColor=1b1b1b)
 ![CLIENT + SERVER · SERVER-SYNCED](https://img.shields.io/badge/CLIENT_%2B_SERVER-SERVER--SYNCED-1f4e79?style=for-the-badge&labelColor=1b1b1b)
 
 | 🗺️ **Every gate** | 📸 **Photos** | 💀 **Corpse run** | 🛡️ **Unbreakable** |
@@ -20,18 +20,17 @@ Die, and a private gate to your grave waits by your bed. Lock your gates with a 
 
 ---
 
-![ᛞ NEW IN 1.6.5 · THE GRAVE WARD](https://img.shields.io/badge/NEW_IN_1.6.5-THE_GRAVE_WARD-8b1e1e?style=for-the-badge&labelColor=1b1b1b&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDEyIDE2Ij48cGF0aCBkPSJNMSAyVjEyTDkgMlYxMkwxIDIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2JmODM4MyIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg%3D%3D)
+![ᛞ NEW IN 1.6.6 · IT TELLS YOU WHY](https://img.shields.io/badge/NEW_IN_1.6.6-IT_TELLS_YOU_WHY-8b1e1e?style=for-the-badge&labelColor=1b1b1b&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDEyIDE2Ij48cGF0aCBkPSJNMSAyVjEyTDkgMlYxMkwxIDIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2JmODM4MyIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg%3D%3D)
 
-**Step out of your corpse gate and nothing can hurt you for a few seconds. Gear up before what killed you gets a second go.**
+**Walk up to a portal with ore or metal in your bag and it now says so, in the middle of the screen, naming what is stopping you.**
 
 | You | It |
 |---|---|
-| **land at your grave** through your corpse gate | you cannot be hurt for `CorpseRunArrivalWardSeconds` (20 s by default); a banner says so |
-| **are still in the loading screen** | the clock has not started: it counts from the moment you stand on the ground |
-| **swing a weapon** | the ward ends at once: it covers a gear-up, not a fight |
-| **run a server that wants it gone** | set `CorpseRunArrivalWardSeconds` to 0 |
+| **reach a portal carrying something that can't travel** | the centre of the screen reads *You can't teleport with: Copper Ore, Tin Ore*, so a quiet gate no longer looks broken |
+| **store or drop the items** | the destination window opens as usual |
+| **run an item filter** | the names follow your server's `FilterMode`, `WhitelistItems` and `BlacklistItems`, the same rules the gate uses |
 
-🔹 **Last time (1.6.4):** `SkipPortalPrefabs` hands other mods' portals back to them.
+🔹 Once per walk-up, never repeated while you stand there · 🔹 Silent at a concealed gate nobody has found, so it can't give one away
 
 ---
 

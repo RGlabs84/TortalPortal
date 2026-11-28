@@ -23,18 +23,17 @@ Die, and a private gate to your grave waits by your bed. Lock your gates with a 
 
 ---
 
-{{rune ᛞ | NEW IN {{version}} | THE GRAVE WARD | 8b1e1e}}
+{{rune ᛞ | NEW IN {{version}} | IT TELLS YOU WHY | 8b1e1e}}
 
-**Step out of your corpse gate and nothing can hurt you for a few seconds. Gear up before what killed you gets a second go.**
+**Walk up to a portal with ore or metal in your bag and it now says so, in the middle of the screen, naming what is stopping you.**
 
 | You | It |
 |---|---|
-| **land at your grave** through your corpse gate | you cannot be hurt for {{key CorpseRunArrivalWardSeconds}} (20 s by default); a banner says so |
-| **are still in the loading screen** | the clock has not started: it counts from the moment you stand on the ground |
-| **swing a weapon** | the ward ends at once: it covers a gear-up, not a fight |
-| **run a server that wants it gone** | set {{key CorpseRunArrivalWardSeconds}} to 0 |
+| **reach a portal carrying something that can't travel** | the centre of the screen reads *You can't teleport with: Copper Ore, Tin Ore*, so a quiet gate no longer looks broken |
+| **store or drop the items** | the destination window opens as usual |
+| **run an item filter** | the names follow your server's {{key FilterMode}}, {{key WhitelistItems}} and {{key BlacklistItems}}, the same rules the gate uses |
 
-🔹 **Last time (1.6.4):** {{key SkipPortalPrefabs}} hands other mods' portals back to them.
+🔹 Once per walk-up, never repeated while you stand there · 🔹 Silent at a concealed gate nobody has found, so it can't give one away
 
 ---
 
